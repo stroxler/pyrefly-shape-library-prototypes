@@ -1,0 +1,5 @@
+search_path = [
+    ".",
+    "pallas-stubs",
+]
+python_version = "3.13"

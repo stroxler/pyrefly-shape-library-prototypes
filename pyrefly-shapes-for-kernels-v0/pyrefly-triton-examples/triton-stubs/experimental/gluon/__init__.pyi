@@ -1,0 +1,16 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+from collections.abc import Callable
+from typing import Any, dataclass_transform, overload
+
+@overload
+def jit[F: Callable[..., Any]](fn: F) -> F: ...
+@overload
+def jit[F: Callable[..., Any]](*, do_not_specialize: list[str]) -> Callable[[F], F]: ...
+@dataclass_transform(eq_default=False)
+def aggregate[F: type[Any]](cls: F) -> F: ...
+def constexpr_function[F: Callable[..., Any]](fn: F) -> F: ...
+def must_use_result[F: Callable[..., Any]](fn: F) -> F: ...
