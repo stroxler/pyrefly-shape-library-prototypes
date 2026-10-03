@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.pyrefly/
+# Keep the locally copied CuTe examples out of a public push until their
+# source provenance and redistribution terms have been reviewed.
+pyrefly-shapes-for-kernels-v0/pyrefly-cute-examples/
