@@ -1,0 +1,3 @@
+search_path = [".", "triton_library", "pallas_library/pallas-stubs"]
+project_excludes = ["triton_library/triton-stubs/**", "pallas_library/pallas-stubs/**"]
+python-interpreter-path = "/home/stroxler/.kernel-shapes-venv/bin/python"
