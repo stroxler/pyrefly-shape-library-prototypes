@@ -16,9 +16,10 @@ host array a program sees. The kernel receives `Ref`s to these blocks;
 `InRef[[Block]]` and `OutRef[[Block]]` describe per-program views, while
 `jax.Array[[Length]]` and `ShapeDtypeStruct` describe the host allocations.
 The example ties `Length`, `Block`, grid, specs, and Ref operations together
-without writing Triton-style pointer arithmetic or an edge mask. Its chosen
-grid and spec require a divisible length for a complete last block; type
-checking alone does not establish that runtime precondition.
+without writing Triton-style pointer arithmetic or an edge mask. Its grid
+uses ceiling division: Pallas pads partial reads and drops out-of-bounds
+writes, so elementwise vector add does not require a divisible length. These
+types do not prove the index-map values select the correct blocks.
 
 The stub overlay models the host-to-Ref relationship for selected
 `pallas_call` patterns, block indexing, and shape-carrying JAX operations.
@@ -1226,17 +1227,17 @@ used in an in-block reduction.
 From this directory, check static expectations with:
 
 ```sh
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations 'tests/test_*.py'
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations 'tests/test_*.py'
 ```
 
-Run the CPU-interpretable kernels as runtime tests in the existing JAX virtualenv:
+If you later install JAX in `.venv`, run the optional CPU-interpreter tests with:
 
 ```sh
-~/.kernel-shapes-venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+../../.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
 Exercise the two-device CPU `shard_map` shape tests with:
 
 ```sh
-XLA_FLAGS=--xla_force_host_platform_device_count=2 ~/.kernel-shapes-venv/bin/python -m unittest discover -s tests -p 'test_shard_map*boundary.py'
+XLA_FLAGS=--xla_force_host_platform_device_count=2 ../../.venv/bin/python -m unittest discover -s tests -p 'test_shard_map*boundary.py'
 ```

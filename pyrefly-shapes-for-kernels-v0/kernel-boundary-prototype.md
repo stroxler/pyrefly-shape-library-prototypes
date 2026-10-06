@@ -4,8 +4,10 @@ This note records a possible direction, not an implemented wrapper generator or
 a proposed public annotation syntax. The kernel fixtures remain experiments in
 checking **unchanged kernel bodies** with semantic parameter types. A future
 user-facing declaration might instead describe host arrays and the launch,
-with Pyrefly deriving those kernel parameter types internally. The declaration
-should be the single source for both projections so they cannot disagree.
+with Pyrefly deriving those kernel parameter types internally. It is also
+acceptable to declare both host and kernel types explicitly, provided a bridge
+checker can verify their correspondence. Neither set of annotations should be
+an unchecked promise about the other.
 
 The immediate question is whether a declaration could determine a *safe* host
 boundary. It need not express every requirement in the host-language type
@@ -21,6 +23,112 @@ claims:
 None of these claims follows automatically from a type-checking kernel
 signature. Unknown properties must remain explicit obligations, not be treated
 as established merely because the surrounding stub accepts a call.
+
+## A shared boundary model
+
+Triton and Pallas have the same three layers even though they distribute the
+work differently:
+
+| Layer | What it describes | Vector-add example |
+| --- | --- | --- |
+| Python | Callable inputs and results: host allocations, related dimensions, permitted layouts and dtypes. | Two arrays of length `N` return one array of length `N`. |
+| Launch metadata | Program-to-view mapping, grid, tile sizes, scalar and compile-time arguments, output allocation and edge policy. | A block of size `B` chosen for each of `ceildiv(N, B)` programs. |
+| Kernel | What one program can read and write, with semantic parameter types checked against its unchanged body. | Two length-`B` input views produce one length-`B` output view. |
+
+The desired fourth component is a *checked correspondence* among these layers,
+not necessarily inference of any layer from the others. In particular, knowing
+only a kernel's `[B]` view does not determine the host length `N`, which output
+must be allocated, or how a program chooses its view. A user's declared host
+callable could be checked against an explicit metadata declaration and the
+kernel signature. Alternatively, a later design might derive the host
+callable from that declaration; automatic inference is not a prerequisite for
+avoiding an unchecked FFI.
+
+For the two vector adds, the same correspondence has different realizations:
+
+| Relationship to check | Triton | Pallas |
+| --- | --- | --- |
+| Host allocations to kernel parameters | Two host inputs `[N]` become input pointers with full allocation bound `[N]`; a newly allocated `[N]` result becomes an output pointer. The wrapper supplies `n_elements: Int[N]` and a chosen `BLOCK_SIZE: Int[B]`. | Two host inputs `[N]` become `[B]` input `Ref`s through `in_specs`; an allocated `[N]` result becomes a `[B]` output `Ref` through `out_shape` and `out_specs`. |
+| Program-to-view mapping | `pid * B + arange(0, B)` produces offsets; comparing them to `N` produces the explicit tail mask used by loads and the store. | `BlockSpec((B,), lambda i: (i,))` maps program `i` to block `i`; blocked indexing handles a partial final block for this elementwise kernel. |
+| Callable and launch | The proposed host signature is `(torch.Tensor[[N]], torch.Tensor[[N]]) -> torch.Tensor[[N]]`; metadata derives a grid of `ceildiv(N, B)` and a Triton bracketed launch. The fixture's direct typed kernel call is *not* that launch. | The proposed host signature is `(jax.Array[[N]], jax.Array[[N]]) -> jax.Array[[N]]`; metadata supplies `grid=(cdiv(N, B),)` and the three specs to `pallas_call`, which constructs the host callable. |
+
+These rows describe a desired check, not one already established by the
+prototype. The Pallas stub has a specialized `pallas_call` overload for this
+vector add; multiplying overloads for every arity, output tree and block
+pattern is not itself a scalable bridge design. A generic checker might need
+to pair corresponding host arguments, specs and kernel parameters across a
+tuple or pytree, transform their types, and check a *relation* among the
+entries. `MapIntTuples` illustrates mapping over a tuple of shape values but
+does not express that multi-input, multi-output relation by itself. A narrow
+library-specific hook remains possible if a reusable relation cannot be
+expressed in stubs; the experiment should identify the missing primitive
+before hardcoding either DSL into Pyrefly.
+
+The kernel types might not be the user-facing entry point. A host-first
+declaration could derive the semantic kernel parameter types internally;
+the present illegal Triton annotations are a way to test those types without
+settling the eventual syntax. Conversely, declaring both sides is useful if
+the checker cross-references them. In either case the runtime wrapper would
+be controlled and generated by us, rather than hand-typed by users. Its
+*exposed signature* would still be statically checked; its generated
+implementation would use dynamic checks and launch code, not depend on users
+manually type-checking that implementation.
+
+## What a bridge checker must establish
+
+The checker needs to relate each named host input and output to the appropriate
+kernel parameter, its storage role, and the metadata that supplies it. It must
+also account for parameters absent from the host callable: injected dimension
+and stride values, `constexpr` tile choices, Pallas scratch allocations,
+descriptors, and allocated or preinitialized outputs. Matching only the
+number of arguments or their tile shapes would miss swapped equal-shaped
+input/output roles and unsatisfied dtype or initialization requirements.
+
+For each correspondence, record the strength of evidence:
+
+- **Body-checked:** a semantic type reaches a real kernel operation, with
+  negative controls demonstrating that a wrong shape or role fails there.
+- **Bridge-checked:** a host shape/role is connected to the intended kernel
+  parameter and to its `BlockSpec`, pointer view or descriptor. An overload
+  that merely assumes this relation is not body evidence.
+- **Runtime-enforced:** generated code checks or transforms a property before
+  constructing descriptors, allocating outputs, or launching. A type promise
+  is not a substitute for a required runtime shape or layout check.
+- **Unverified or trusted:** arbitrary index-map values, general grid coverage,
+  numerical bounds, hardware layout legality, and operations whose shape
+  stubs are too broad must remain explicit obligations.
+
+The mapping may not be a simple slicing formula. Pallas specs can squeeze or
+pad axes, prefetch scalars, and map a grid coordinate to different input and
+output positions. Triton may group program IDs, use strides and descriptors,
+or accumulate into shared outputs. A structured, checkable mapping can give
+stronger evidence for common patterns; an arbitrary Python lambda or pointer
+arithmetic expression cannot be certified simply because its declared
+input/output types match. If a safety-critical property is unverified, the
+prototype must not describe that boundary as safe.
+
+## What generating a dynamic wrapper would require
+
+A generator would turn the checked declaration into a host callable. At each
+call, or when specializing a cached callable, it would bind actual input
+shapes and runtime metadata to symbolic dimensions; check dimensions,
+dtype/device compatibility, strides, alignment, aliasing and other
+preconditions that the host type system does not guarantee;
+then reject or explicitly sanitize inputs according to a declared policy.
+Only after those checks would it choose compile-time tile values, derive
+scalar/stride arguments and descriptors, allocate outputs with the specified
+shape and initialization, calculate the grid, and invoke the backend launch.
+For Pallas this includes constructing `out_shape`, specs and `pallas_call`;
+for Triton it includes the bracketed JIT launch. A wrapper returns the output
+or a declared output tree, preserving the agreed ownership and alias policy.
+
+All such checks must precede any access that relies on them; copying an input
+has a performance and aliasing cost that must be explicit. Generation could
+cache backend-specialized callables without changing the declared host
+signature. We are **not** implementing that generator here. Its feasibility
+depends on knowing, for each kernel, which values come from the call, which
+are fixed at construction, and which requirements remain too complex to
+establish statically or enforce economically at runtime.
 
 ## Information a declaration would need
 
@@ -179,11 +287,13 @@ kernel implementation remains incomplete.
 
 ## How to use this note during the example sweeps
 
-For each kernel, record the host arrays and output allocation, the shape and
-storage preconditions, scalar/constexpr sources, program-to-tile mapping,
-and the actions a host call would take when a precondition fails. Classify
-each claim as *checked in the body*, *enforced or sanitized at the host
-boundary*, or *unverified*. A shape relation stated only in a trusted stub
+For each kernel, record the proposed host signature; each named host-to-kernel
+parameter correspondence; the shape and storage preconditions; scalar,
+scratch and compile-time sources; output allocation and initialization; the
+program-to-view map; and what happens when a host precondition fails. Label
+each relationship as body-checked, bridge-checked, runtime-enforced or
+unverified. Note what a generated wrapper would compute, validate, sanitize,
+allocate, launch and return. A shape relation stated only in a trusted stub
 is not body evidence; a local masked access is not a proof of full grid
 coverage. For dynamic or hardware-specific cases, note the exact unverified
 obligation instead of broadening an overload until the fixture passes.

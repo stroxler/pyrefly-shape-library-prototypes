@@ -34,10 +34,11 @@ The language guides describe distinct approaches:
   local-only: layouts, strides, nested tile/rest views, and copy fragments.
   This directory is excluded from Git pending source-provenance review.
 
-The [host-boundary note](kernel-boundary-prototype.md) separates properties
-validated inside the kernel from host-side validation or sanitization that a
-future generated wrapper would need. For a closer reading, start with the
-[Triton vector add](pyrefly-triton-examples/tests/test_vector_add.py) and the
+The [host-boundary note](kernel-boundary-prototype.md) sketches a shared
+Python/metadata/kernel model for Triton and Pallas: what correspondences to
+check, what runtime validation or sanitization a generated wrapper would
+need, and which proof obligations remain open. For a concrete example, compare
+[Triton vector add](pyrefly-triton-examples/tests/test_vector_add.py) with
 [Pallas vector add](pyrefly-pallas-examples/tests/test_vector_add.py); each
 directory has a README describing coverage and known gaps.
 
@@ -46,28 +47,35 @@ and their remaining proof obligations. [AGENTS.md](AGENTS.md) provides a
 shorter working guide for agents continuing this kernel experiment.
 
 The local [pyproject.toml](pyproject.toml) pins Pyrefly, its shape extensions,
-and its Torch stubs to `1.4.0.dev3`. These configs resolve `shape_extensions`
-and host libraries from the selected Python interpreter, not a neighboring
-fbsource checkout. With `~/.kernel-shapes-venv` already installed:
+and its Torch stubs to `1.4.0.dev3`. Each `pyrefly.toml` points to the
+repository's `.venv/bin/python`, derives the Python version from that
+interpreter (currently 3.12), and uses the checked-in stub overlays. Open the
+repository in your editor with `.venv/bin/pyrefly` as the language server.
+From the repository root, run static checks with:
 
 ```sh
 cd pyrefly-shapes-for-kernels-v0/pyrefly-triton-examples
-~/.kernel-shapes-venv/bin/pyrefly check -c pyrefly.toml \
-  --python-interpreter-path ~/.kernel-shapes-venv/bin/python \
+../../.venv/bin/pyrefly check -c pyrefly.toml \
   --expectations tests/test_vector_add.py
 
 cd ../pyrefly-pallas-examples
-~/.kernel-shapes-venv/bin/pyrefly check -c pyrefly.toml \
-  --python-interpreter-path ~/.kernel-shapes-venv/bin/python \
+../../.venv/bin/pyrefly check -c pyrefly.toml \
   --expectations tests/test_vector_add.py
-~/.kernel-shapes-venv/bin/python -m unittest discover -s tests \
-  -p 'test_vector_add.py' -q
 ```
 
 `--expectations` checks the negative-control diagnostics embedded in fixtures;
 success does not mean the output has zero errors. The long example READMEs
 retain their detailed exploration notes, with commands adjusted for this
 standalone venv; the commands above are the supported starting point here.
+The local Triton and JAX/Pallas stub overlays are sufficient for reading and
+type-checking kernel examples; installing the runtime Triton or JAX packages
+is not required. The Torch shape stubs are partial: host-boundary fixtures
+using Torch also need the real Torch package for complete diagnostics, even
+when nothing is executed. As of this setup, Torch, JAX, and Triton are not
+installed in `.venv`; without Torch, the Triton suite has a missing expected
+error in its Torch-backed `test_gluon_persistent_issue_loads_host.py` fixture.
+Pallas and CuTe static expectation suites pass. JAX is needed only to run the
+optional Pallas CPU-interpreter tests.
 Four Triton expectation comments were removed because the released Pyrefly
 build does not emit those unreachable-code diagnostics. No kernel body's
 executable statements were changed for this copy.

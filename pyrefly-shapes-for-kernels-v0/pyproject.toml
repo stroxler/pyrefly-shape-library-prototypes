@@ -2,7 +2,7 @@
 name = "pyrefly-shapes-for-kernels-v0"
 version = "0.0.0"
 description = "Semantic shape contracts for kernel authoring languages"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "pyrefly==1.4.0.dev3",
     "pyrefly-shape-extensions==1.4.0.dev3",

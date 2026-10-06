@@ -371,88 +371,88 @@ been run through the CPU backend here.
 To check the fixture with Pyrefly, run from this directory:
 
 ```sh
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_vector_add.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_cpu_vector_add_tiled.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_cpu_gemv.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_cpu_gemv_bf16.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_coalesce_copy.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_coalesce_pipelined.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_elementwise_layout.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_transpose_layout.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_software_matmul.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_warp_specialization_entry.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_warp_specialization_helper.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_reduction_lowering.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_mma_lowering.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_mma_precision.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_inner_tree_reduction.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_mma_architecture.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_coalesce_load_types.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_pipeline_warp_specialization_helper.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_cpu_fused_softmax.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_cpu_matrix_padding.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_compile_ttir_vector_add.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_fused_softmax.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_matrix_multiplication.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_low_memory_dropout.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_layer_norm.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_fused_attention.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_extern_functions.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_grouped_gemm.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_grouped_gemm_tma.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_naive_matmul.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_tma_matmul.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_persistent_matmul.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_tma_persistent.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_descriptor_persistent.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_block_scaled_matmul.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_block_scaled_matmul_cdna4.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_arange_lengths.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_programmatic_dependent_launch.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_stock_split_k_matmul.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_skinny_atomic_matmul.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_twopass_compute_matmul.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_twopass_reduce_matmul.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_single_cta_layer_norm.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_multi_cta_layer_norm.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_multi_cta_2d_layer_norm.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_attention_backward_preprocess.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_attention_backward_dkdv.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_attention_backward_dq.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_attention_backward_outer.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_attention_ws_subtile.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_attention_ws_inner.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_attention_ws_tma_dp.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_attention_ws_entry.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_fused_attention_ws_inner.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_attention_ws_numbered_backward_dkdv.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_attention_ws_numbered_backward_dq.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_attention_ws_numbered_backward_outer.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_attention_ws_device_tma.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_attention_ws_device_inner_oss_dp.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_memcpy_1d.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_memcpy_2d.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_async_copy.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_tma_memcpy.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_tma_message_passing.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_tma_issue_loads.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_tma_perform_add.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_tma_elementwise_add.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_wgmma_small.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly-host-bridge.toml --python-interpreter-path ~/.kernel-shapes-venv/bin/python --expectations tests/test_gluon_wgmma_host.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_wgmma_blocked.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly-host-bridge.toml --python-interpreter-path ~/.kernel-shapes-venv/bin/python --expectations tests/test_gluon_wgmma_blocked_host.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_wgmma_pipelined.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly-host-bridge.toml --python-interpreter-path ~/.kernel-shapes-venv/bin/python --expectations tests/test_gluon_wgmma_pipelined_host.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_tmem_example.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly-host-bridge.toml --python-interpreter-path ~/.kernel-shapes-venv/bin/python --expectations tests/test_gluon_tmem_example_host.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_tcgen05_small.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly-host-bridge.toml --python-interpreter-path ~/.kernel-shapes-venv/bin/python --expectations tests/test_gluon_tcgen05_small_host.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_tcgen05_blocked.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly-host-bridge.toml --python-interpreter-path ~/.kernel-shapes-venv/bin/python --expectations tests/test_gluon_tcgen05_blocked_host.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_gluon_tcgen05_pipelined.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly-host-bridge.toml --python-interpreter-path ~/.kernel-shapes-venv/bin/python --expectations tests/test_gluon_tcgen05_pipelined_host.py
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly.toml --expectations tests/test_launch_protocol_probe.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_vector_add.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_cpu_vector_add_tiled.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_cpu_gemv.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_cpu_gemv_bf16.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_coalesce_copy.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_coalesce_pipelined.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_elementwise_layout.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_transpose_layout.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_software_matmul.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_warp_specialization_entry.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_warp_specialization_helper.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_reduction_lowering.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_mma_lowering.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_mma_precision.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_inner_tree_reduction.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_mma_architecture.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_coalesce_load_types.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_pipeline_warp_specialization_helper.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_cpu_fused_softmax.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_cpu_matrix_padding.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_compile_ttir_vector_add.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_fused_softmax.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_matrix_multiplication.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_low_memory_dropout.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_layer_norm.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_fused_attention.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_extern_functions.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_grouped_gemm.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_grouped_gemm_tma.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_naive_matmul.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_tma_matmul.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_persistent_matmul.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_tma_persistent.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_descriptor_persistent.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_block_scaled_matmul.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_block_scaled_matmul_cdna4.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_arange_lengths.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_programmatic_dependent_launch.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_stock_split_k_matmul.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_skinny_atomic_matmul.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_twopass_compute_matmul.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_twopass_reduce_matmul.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_single_cta_layer_norm.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_multi_cta_layer_norm.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_multi_cta_2d_layer_norm.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_attention_backward_preprocess.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_attention_backward_dkdv.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_attention_backward_dq.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_attention_backward_outer.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_attention_ws_subtile.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_attention_ws_inner.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_attention_ws_tma_dp.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_attention_ws_entry.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_fused_attention_ws_inner.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_attention_ws_numbered_backward_dkdv.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_attention_ws_numbered_backward_dq.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_attention_ws_numbered_backward_outer.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_attention_ws_device_tma.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_attention_ws_device_inner_oss_dp.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_memcpy_1d.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_memcpy_2d.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_async_copy.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_tma_memcpy.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_tma_message_passing.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_tma_issue_loads.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_tma_perform_add.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_tma_elementwise_add.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_wgmma_small.py
+../../.venv/bin/pyrefly check -c pyrefly-host-bridge.toml --expectations tests/test_gluon_wgmma_host.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_wgmma_blocked.py
+../../.venv/bin/pyrefly check -c pyrefly-host-bridge.toml --expectations tests/test_gluon_wgmma_blocked_host.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_wgmma_pipelined.py
+../../.venv/bin/pyrefly check -c pyrefly-host-bridge.toml --expectations tests/test_gluon_wgmma_pipelined_host.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_tmem_example.py
+../../.venv/bin/pyrefly check -c pyrefly-host-bridge.toml --expectations tests/test_gluon_tmem_example_host.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_tcgen05_small.py
+../../.venv/bin/pyrefly check -c pyrefly-host-bridge.toml --expectations tests/test_gluon_tcgen05_small_host.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_tcgen05_blocked.py
+../../.venv/bin/pyrefly check -c pyrefly-host-bridge.toml --expectations tests/test_gluon_tcgen05_blocked_host.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_gluon_tcgen05_pipelined.py
+../../.venv/bin/pyrefly check -c pyrefly-host-bridge.toml --expectations tests/test_gluon_tcgen05_pipelined_host.py
+../../.venv/bin/pyrefly check -c pyrefly.toml --expectations tests/test_launch_protocol_probe.py
 ```
 
 The stub overlay is deliberately small and must not use permissive catch-all
@@ -1148,8 +1148,8 @@ explicit expected false-positive diagnostic, so its scaling is not validated.
 
 The separate `tests/test_twopass_host_bridge.py` fixture checks Torch
 allocation shapes and probes the Python-to-Triton seam. Run it with
-`pyrefly-host-bridge.toml` and `--python-interpreter-path` pointing at an
-environment with Torch installed. Resolving `torch._C.TensorBase` is necessary:
+`pyrefly-host-bridge.toml`, after installing Torch into the configured `.venv`.
+Resolving `torch._C.TensorBase` is necessary:
 without it, Tensor assignability can appear to pass incorrectly. With Torch
 resolved, wrong scratch axes and output sizes are rejected, including at
 `Tensor[...]` annotations. A host Tensor is also rejected as a semantic scratch
@@ -1175,7 +1175,7 @@ hook would need to supply, not a runnable replacement for the tutorial
 wrapper. Run the focused check with a Torch-enabled interpreter:
 
 ```sh
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly-host-bridge.toml --python-interpreter-path ~/.kernel-shapes-venv/bin/python --expectations tests/test_vector_add_host_adapter.py
+../../.venv/bin/pyrefly check -c pyrefly-host-bridge.toml --expectations tests/test_vector_add_host_adapter.py
 ```
 
 The separate `tests/test_gluon_tma_memcpy_host.py` copies the **unchanged
@@ -1216,7 +1216,7 @@ These three Torch-dependent fixtures are excluded from the regular
 `pyrefly.toml` corpus command and checked together with:
 
 ```sh
-~/.kernel-shapes-venv/bin/pyrefly check --python-interpreter-path ~/.kernel-shapes-venv/bin/python -c pyrefly-host-bridge.toml --python-interpreter-path ~/.kernel-shapes-venv/bin/python --expectations tests/test_gluon_tma_memcpy_host.py tests/test_vector_add_host_adapter.py tests/test_twopass_host_bridge.py
+../../.venv/bin/pyrefly check -c pyrefly-host-bridge.toml --expectations tests/test_gluon_tma_memcpy_host.py tests/test_vector_add_host_adapter.py tests/test_twopass_host_bridge.py
 ```
 
 Tutorial 10's `block_scaled_matmul_kernel_cdna4` has an independent
