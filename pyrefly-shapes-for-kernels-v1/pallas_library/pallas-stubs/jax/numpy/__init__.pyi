@@ -26,7 +26,11 @@ from jax.experimental.pallas.tpu import VmemScratchRef
 from shape_extensions import Int, IntTuple, IntVar
 
 float32: object
+bool_: object
+floating: object
 inf: float
+
+def issubdtype(dtype: object, kind: object) -> bool: ...
 
 class Int32Dtype: ...
 class BFloat16Dtype: ...
@@ -150,6 +154,10 @@ def maximum[Rows: IntVar](
     left: Tile[[Rows, 128]], right: Tile[[Rows, 1]]
 ) -> Tile[[Rows, 128]]: ...
 def minimum(x: int, y: int) -> int: ...
+@overload
+def where[Shape: IntTuple](
+    condition: Tile[Shape], true_value: Tile[Shape], false_value: float
+) -> Tile[Shape]: ...
 @overload
 def where[Window: IntVar, Cols: IntVar](
     condition: IndexMask[Window],

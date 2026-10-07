@@ -541,8 +541,8 @@ class AttentionStatsPointer[Heads: IntVar, Tokens: IntVar]:
     ) -> AttentionStatsTilePointers[Heads, Tokens, Tile]: ...
 
 class AttentionStatsRow[Heads: IntVar, Tokens: IntVar]:
-    def __add__[Tile: IntTuple](
-        self, offsets: Offsets[Tile]
+    def __add__[Tile: IntTuple, Origin: str](
+        self, offsets: Offsets[Tile, 1, Origin]
     ) -> AttentionStatsTilePointers[Heads, Tokens, Tile]: ...
 
 class AttentionStatsTilePointers[Heads: IntVar, Tokens: IntVar, Tile: IntTuple]: ...
@@ -1519,8 +1519,8 @@ def where[Tile: IntTuple](
     condition: tensor[Tile], x: tensor[Tile], y: float
 ) -> tensor[Tile]: ...
 @overload
-def where[Target: IntTuple, Tile: IntTuple](
-    condition: Mask[Target, Tile], x: tensor[Tile], y: float
+def where[Target: IntTuple, Tile: IntTuple, Origin: str](
+    condition: Mask[Target, Tile, Origin], x: tensor[Tile], y: float
 ) -> tensor[Tile]: ...
 @overload
 def where[Rows: IntVar, Cols: IntVar, BM: IntVar, BN: IntVar](
@@ -1536,7 +1536,9 @@ def where[Dim: IntVar, Tile: IntTuple](
 def where[Tile: IntTuple](
     condition: tensor[Tile], x: float, y: float
 ) -> tensor[Tile]: ...
-def rand[Tile: IntTuple](seed: int, offsets: Offsets[Tile]) -> tensor[Tile]: ...
+def rand[Tile: IntTuple, Origin: str](
+    seed: int, offsets: Offsets[Tile, 1, Origin]
+) -> tensor[Tile]: ...
 def sqrt[Tile: IntTuple](value: tensor[Tile]) -> tensor[Tile]: ...
 def atomic_cas[Groups: IntVar, Capacity: IntVar](
     ptr: LockArrayPointer[Groups, Capacity], old: int, new: int

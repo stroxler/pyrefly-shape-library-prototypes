@@ -27,6 +27,8 @@ The 1D pointer-array overloads check that logical offsets were scaled by the
 pointer's element stride, and their load/store masks must use the same logical
 allocation length, tile width, and offset-origin category. These stubs do not
 prove predicate implication or track masked-lane validity through tensors.
+Seeded dropout also preserves the tile width when `tl.rand` receives shifted
+unit-stride offsets, so `tl.where` and `tl.store` check its value-tile shape.
 
 Grouped matmul uses evaluable generic `tlt.InPointer` and `tlt.OutPointer`
 markers with two shape and two stride parameters. The launch hook checks

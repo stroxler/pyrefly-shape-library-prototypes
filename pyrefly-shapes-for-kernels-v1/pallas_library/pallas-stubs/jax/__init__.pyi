@@ -47,6 +47,9 @@ class Array[Shape: IntTuple]:
     ) -> Array[[Batch, Block]]: ...
     @overload
     @property
+    def shape(self: Array[[]]) -> tuple[()]: ...
+    @overload
+    @property
     def shape[Length: IntVar](self: Array[[Length]]) -> tuple[Int[Length]]: ...
     @overload
     @property
@@ -240,6 +243,19 @@ class ShapeDtypeStruct[Shape: IntTuple]:
     def shape[Rows: IntVar, Cols: IntVar](
         self: ShapeDtypeStruct[[Rows, Cols]],
     ) -> tuple[Int[Rows], Int[Cols]]: ...
+    @overload
+    @property
+    def shape[Batch: IntVar, Heads: IntVar, Queries: IntVar](
+        self: ShapeDtypeStruct[[Batch, Heads, Queries]],
+    ) -> tuple[Int[Batch], Int[Heads], Int[Queries]]: ...
+    @overload
+    @property
+    def shape[Batch: IntVar, Queries: IntVar, Heads: IntVar, Dim: IntVar](
+        self: ShapeDtypeStruct[[Batch, Queries, Heads, Dim]],
+    ) -> tuple[Int[Batch], Int[Queries], Int[Heads], Int[Dim]]: ...
+    @overload
+    @property
+    def shape(self: ShapeDtypeStruct[[]]) -> tuple[()]: ...
     @classmethod
     def like(cls, array: Array[Shape]) -> ShapeDtypeStruct[Shape]: ...
     @overload

@@ -1,4 +1,4 @@
-"""Run Pallas vector add with explicit checked host-to-kernel inputs."""
+"""Run Pallas vector add with a checked JAX-array-to-Ref boundary."""
 
 from __future__ import annotations
 
@@ -10,8 +10,6 @@ import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from shape_extensions import Int, IntVar
 
-from pallas_library.checked_call import as_pallas_input
-from pallas_library.host_input import Input
 from pallas_library.layout import checked_pallas_call, grid_axis, vector_layout
 
 Block = IntVar("Block")
@@ -26,8 +24,8 @@ def add_kernel(
 
 
 def checked_add[Length: IntVar, Tile: IntVar](
-    x: Input[[Length]],
-    y: Input[[Length]],
+    x: jax.Array[[Length]],
+    y: jax.Array[[Length]],
     *,
     block_size: Int[Tile],
     output_dtype: object = jnp.float32,
@@ -79,15 +77,11 @@ class VectorAddTest(unittest.TestCase):
             with self.subTest(length=length):
                 x = cast(Any, jnp.arange)(length, dtype=jnp.float32)
                 y = x * 3
-                actual = checked_add(
-                    as_pallas_input(x), as_pallas_input(y), block_size=4
-                )
+                actual = checked_add(x, y, block_size=4)
                 self.assertEqual(actual.shape, (length,))
                 self.assertEqual(actual.tolist(), (x + y).tolist())
                 self.assertEqual(
-                    checked_add(
-                        y=as_pallas_input(y), x=as_pallas_input(x), block_size=4
-                    ).tolist(),
+                    checked_add(y=y, x=x, block_size=4).tolist(),
                     actual.tolist(),
                 )
 
@@ -101,8 +95,8 @@ class VectorAddTest(unittest.TestCase):
             with self.subTest(error=error):
                 with self.assertRaisesRegex(ValueError, error):
                     checked_add(
-                        as_pallas_input(good),
-                        as_pallas_input(invalid),
+                        good,
+                        invalid,
                         block_size=4,
                     )
 
@@ -110,8 +104,8 @@ class VectorAddTest(unittest.TestCase):
             with self.subTest(block_size=invalid_block):
                 with self.assertRaisesRegex(ValueError, "block_size"):
                     checked_add(
-                        as_pallas_input(good),
-                        as_pallas_input(good),
+                        good,
+                        good,
                         block_size=cast(Any, invalid_block),
                     )
 
@@ -131,8 +125,8 @@ class VectorAddTest(unittest.TestCase):
         actual = design_doc_add(x, y)
         self.assertEqual(actual.tolist(), (x + y).tolist())
         checked = checked_add(
-            as_pallas_input(x),
-            as_pallas_input(y),
+            x,
+            y,
             block_size=2,
             output_dtype=jnp.int32,
         )
@@ -142,8 +136,6 @@ class VectorAddTest(unittest.TestCase):
 if TYPE_CHECKING:
     typed_input: jax.Array[[8]] = cast(Any, jnp.arange)(8, dtype=jnp.float32)
     assert_type(
-        checked_add(
-            as_pallas_input(typed_input), as_pallas_input(typed_input), block_size=4
-        ),
+        checked_add(typed_input, typed_input, block_size=4),
         jax.Array[[8]],
     )

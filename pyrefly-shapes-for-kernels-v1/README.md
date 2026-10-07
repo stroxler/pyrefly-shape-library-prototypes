@@ -91,6 +91,9 @@ TRITON_INTERPRET=1 /home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v 
 /home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v pallas_examples.test_blocked_matmul
 /home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_matrix_multiplication
 TRITON_INTERPRET=1 /home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_matrix_multiplication
+/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_low_memory_dropout
+TRITON_INTERPRET=1 /home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_low_memory_dropout
+/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v pallas_examples.test_dropout
 ```
 
 Pyrefly reports zero errors for the symbolic body. A normal JIT captures the
@@ -114,7 +117,7 @@ The checks also run when the kernel is launched directly, through the
 evaluated semantic annotations and pre-run hook. CPU tests include empty,
 partial, and full tiles; mixed input dtypes; and the upstream block size.
 
-Pallas `checked_add(as_pallas_input(x), as_pallas_input(y), block_size=4)`
+Pallas `checked_add(x, y, block_size=4)`
 constructs a `vector_layout` with a typed grid axis, block, and index-map
 lambda. `checked_pallas_call` builds a callable that checks runtime input
 shape, dtype, and device against that layout before launching. The 2D matmul
@@ -126,5 +129,5 @@ an empty output without launching a zero-sized grid. The upstream inline
 Contextual typing rejects simple index-map mistakes in the Pallas layouts,
 but neither checked boundary proves that arbitrary index-map arithmetic or
 grid traversal aligns with the operations inside the kernel. Mapping whole host shapes to Ref tile
-shapes without explicit conversion would require a more general parameter-list
-mapping operator or a Pyrefly hook; neither is part of v1.
+shapes to Ref tile shapes for arbitrary kernels would require a more general
+parameter-list mapping operator or a Pyrefly hook; neither is part of v1.

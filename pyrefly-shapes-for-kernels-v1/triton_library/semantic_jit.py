@@ -1,5 +1,7 @@
 """Preserve semantic annotations for Pyrefly while presenting Triton valid source."""
 
+from __future__ import annotations
+
 import ast
 import inspect
 from collections.abc import Callable
@@ -19,6 +21,14 @@ type ConstExpr[T] = Annotated[T, "triton.constexpr"]
 
 class SemanticKernel[F: Callable[..., object]]:
     """Static launch signature of a JIT function; Triton supplies the runtime object."""
+
+    def __call__[**Args, Result](
+        self: SemanticKernel[Callable[Args, Result]],
+        *args: Args.args,
+        **kwargs: Args.kwargs,
+    ) -> Result:
+        """Check JIT helper calls inside a Triton kernel."""
+        raise NotImplementedError("Triton's JIT function implements this method")
 
     def __getitem__(self, grid: tuple[int, ...]) -> F:
         raise NotImplementedError("Triton's JIT function implements this method")

@@ -1,5 +1,69 @@
 # Pallas examples
 
+`test_attention_forward.py` retains JAX's deprecated GPU `mha_forward_kernel`
+and the optional segment-mask helper unchanged, but exercises the noncausal,
+unsegmented branch. `attention_layout` relates Q `[B,Q,H,D]`, K/V `[B,K,H,D]`,
+output `[B,Q,H,D]`, and base-2 log-sum-exp `[B,H,Q]` to a
+`(Q/block_q, B, H)` grid. Its typed callback receives squeezed query
+`[block_q,D]` and full-key/value `[K,D]` Refs plus a `[block_q]` stats Ref.
+The builder constructs the three input BlockSpecs and both output BlockSpecs;
+the checked call validates the three concrete input shapes and dtypes. The
+CPU-interpreter test compares noncausal attention and log-sum-exp with an
+independent NumPy calculation, with Q and K having different lengths.
+
+For a v2: the layout proves axis agreement and grid size but not the *values*
+of arbitrary index-map callbacks or per-lane mask coverage. Its noncausal
+interface does not expose optional segment IDs, causal attention, or the
+optional absence of residual outputs, although the original kernel body
+contains those branches. The general `Layout` container stores heterogeneous
+`BlockSpec`s as objects after the typed factory constructs them; an
+arity-independent mapping abstraction might retain the relationship without
+a new factory per attention signature. Contrast Triton's tutorial: Pallas
+can type distinct Q and K lengths, whereas the current Triton descriptor
+path assumes same-length self-attention.
+
+`test_layer_norm.py` preserves the forward kernel body from JAX's deprecated
+`jax/experimental/pallas/ops/gpu/layer_norm.py` and runs it in CPU interpret
+mode. Three `[Features]` input Refs produce one `[Features]` output Ref and
+two scalar `[]` statistics Refs. `row_statistics_layout` binds all six Ref
+shapes to the typed `out_shape` tuple; `checked_pallas_call` validates host
+shapes and dtypes before JAX traces the kernel. An irregular five-element
+row with four-element blocks exercises all three masked passes through the
+unchanged kernel. There is no host stride restriction because Pallas Refs
+represent logical indices rather than Triton-style pointer addresses.
+
+For v2, test the statistic-output shape mismatch as well as input mismatch:
+the scalar JAX stubs now describe `Array[[]]` and `ShapeDtypeStruct[[]]`,
+whereas v1's general layout builder still describes only single-output
+layouts. The row-statistics layout is deliberately specific to this kernel
+signature; generalizing checked layouts across heterogeneous output tuples
+and optional kernel outputs requires more than the existing arity overloads.
+Neither the loop's grid coverage nor its per-lane mask implication is proved
+by these types. The Triton forward equivalent uses a row-per-program grid,
+while this Pallas row kernel has an empty grid and could be vmapped across
+rows in a separate host adapter.
+
+`test_dropout.py` creates two Pallas analogues to Triton's dropout tutorial;
+these bodies are not copied from an upstream Pallas example. An explicit
+boolean keep-mask and the floating-point values have the same host length
+and block mapping but different dtypes. `vector_layout` now checks each input
+dtype independently while preserving their shared shape. The seeded version
+uses a single input Ref; its closure captures checked probability and integer
+seed metadata, and folds the program ID into a JAX key before sampling a
+tile-shaped Bernoulli keep-mask. The shared builder supports one or two inputs
+and a partial final tile. CPU tests cover both forms and repeatability; the
+Pallas and Triton PRNGs need not return identical masks. Types do not prove
+that every program samples independently or that every accelerator accepts
+the seeded kernel.
+The seeded Pallas kernel samples with a program-specific key and a block
+shape, rather than using each element's global index as its random counter.
+Changing block width can therefore change which random value an element gets
+even when the seed is unchanged. This distinction matters if a later design
+promises reproducibility across launch configurations; it does not weaken
+the checked host shapes. A JAX array already carries a shape in the local
+stubs, so these layouts accept `jax.Array[Shape]` directly and validate the
+concrete shape at launch without an intermediate host-array marker.
+
 `test_vector_add.py` preserves the executable vector-add body from the v0
 Pallas fixture and adds a CPU test for an explicit checked boundary. Its
 `design_doc_add(x, y)` packages the inline `pallas_call` in JAX's
@@ -9,7 +73,7 @@ shape, int32 output, two-element blocks, and four-program grid. The index maps
 return `(i,)` instead of the doc's `i`, the input specs are a tuple instead of
 a list, and `grid=(pl.cdiv(8, 2),)` spells out the doc's `(4,)`; these forms
 fit the current v1 stubs while preserving the mapping. `interpret=True` allows
-CPU testing. `checked_add(as_pallas_input(x), as_pallas_input(y), block_size=2)`
+CPU testing. `checked_add(x, y, block_size=2)`
 also runs the same 8-element inputs, declaring their int32 output dtype.
 
 The
@@ -39,9 +103,9 @@ over the leading matrix dimension. The v1 example supports a 2D input and
 uses `interpret=True` to run on CPU. A typed nested kernel closure replaces
 upstream's `functools.partial` so Pyrefly can check the bound input and output
 ref dimensions. `row_layout` keeps the row kernel's Ref signature and
-matches both Ref shapes to `out_shape`. The `vmap` callback explicitly calls
-`as_pallas_input(row)` before invoking the checked callable, then returns its
-one-row result; the narrowly typed `vmap` stub carries the trailing dimension
+matches both Ref shapes to `out_shape`. The `vmap` callback passes its
+shape-typed JAX row directly to the checked callable and returns the one-row
+result; the narrowly typed `vmap` stub carries the trailing dimension
 through to the 2D return type. Shared `checked_pallas_call` validates shape
 and dtype even inside `vmap`; tracers do not expose a concrete device for a
 device check. The original
