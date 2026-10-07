@@ -34,4 +34,19 @@ these against runtime tensors and scalar arguments. Generic pointer overloads
 accept the 2D addresses and return generic `InTilePointers` and
 `OutTilePointers`, retaining allocation shape, strides, tile shape, and a
 wrapped-axis tag. Address expressions and masks still originate in
-row/column-specific v0 overlay types, which remain a migration target.
+row/column-specific v0 overlay types, which remain a migration target. The
+overlay also retains types for tutorials beyond these v1 fixtures; removing
+them independently of the generic pointer migration would risk discarding
+currently useful address and mask checks.
+
+`launch_layout.py` checks one-dimensional grid size against a checked 1D or 2D
+output view and its tile shape. Its `TiledOutputLayout` carries those symbolic
+shapes; `launch` validates the named dimension, block-size, and optional
+metadata arguments actually passed to the kernel. Vector add and grouped
+matmul use it to bind lengths/dimensions, tile sizes, and grouping metadata to
+their host output and launch configuration. Softmax instead uses
+`GridStrideOutputLayout`, which binds output dimensions and block width while
+allowing an occupancy-dependent number of programs up to the row count.
+The mapping from `tl.program_id(0)`
+to each output tile is still a kernel-side contract, not a verified property
+of the layout.

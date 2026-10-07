@@ -19,7 +19,11 @@ The checked call is `checked_add(as_host_tensor(x), as_host_tensor(y))`.
 their common symbolic length in its pointer types, and derives `n_elements`.
 The evaluated kernel annotations also enable a pre-run check for direct
 launches. The checked host function verifies shared lengths and devices,
-metadata, and output allocation; kernel bodies remain unchanged.
+metadata, and output allocation; kernel bodies remain unchanged. Its
+`tiled_output` layout derives the program count from the checked 1D output
+length and block size, then checks `n_elements` and `BLOCK_SIZE` at launch.
+Empty inputs return without launching a zero-sized grid; the upstream wrapper
+remains unchanged for comparison.
 
 `test_fused_softmax.py` keeps the body of Triton's
 `python/tutorials/02-fused-softmax.py` and its handwritten launch. Its
@@ -40,7 +44,12 @@ frontend-only test compiles the same body to TTIR. GPU occupancy and final
 lowering have not been tested on a device.
 
 The softmax wrapper remains handwritten: its row strides, dimensions, and
-occupancy rule are explicit host-side choices.
+occupancy rule are explicit host-side choices. A `grid_stride_output` layout
+binds actual output rows and columns and checks `BLOCK_SIZE` at launch. Its
+grid may have fewer programs than rows: the unchanged kernel iterates over
+rows using `tl.num_programs(0)`. The layout checks launch arguments and grid
+range, and checks that its power-of-two block covers every output column.
+It does not prove that the row loop matches the grid scheduling.
 Its host signature accepts a checked `host_tensor.Tensor[[Rows, Cols],
 [InputStride, 1]]` and returns `torch.Tensor[[Rows, Cols]]`. A Torch caller uses
 `softmax(as_host_tensor(x))`; the converter checks the 2D shape and unit inner
@@ -69,7 +78,12 @@ Full *static* binding of the kernel's symbolic call signature remains future
 work; no GPU execution or runtime overhead measurement has been performed.
 
 `test_strided_copy.py` probes the general rule without changing either tutorial
-body. Its 1D kernel reads a sliced array at `offsets * input_stride`, while its
+body. Its evaluated `tlt.InPointer`/`tlt.OutPointer` annotations use the same
+shape-and-stride allocation model as the checked host examples; direct launches
+also validate their array dimensions, element strides, and scalar arguments
+before running. These tests do not yet provide a separate checked Torch host
+wrapper or a checked launch layout. Its 1D kernel reads a sliced array at
+`offsets * input_stride`, while its
 2D kernel selects a row using its row stride and reads columns using their
 independent column stride. CPU tests use contiguous, sliced, and transposed
 inputs; both kernels also compile to TTIR without a GPU. `tl.arange` supplies
@@ -113,7 +127,13 @@ row/column-specific types. Those are remaining prototype debt, not a reason
 to keep a matrix-specific pointer type.
 The boundary also checks the declared column stride of a transposed input;
 the generic host-view overload must not infer unit stride when the caller
-explicitly requests unconstrained column stride. The K-loop
+explicitly requests unconstrained column stride. A `tiled_output` layout
+derives the one-dimensional grid from the checked output allocation and
+`(block_m, block_n)`. It preserves the symbolic output shape and tile sizes;
+its `launch` checks the actual `M`, `N`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, and
+`GROUP_SIZE_M` arguments against the layout before invoking Triton. This
+ensures the requested program count matches the output tiles but does not
+prove the grouped PID arithmetic inside the unchanged kernel. The K-loop
 mask's bound `K - k * BLOCK_SIZE_K` widens to `int`, so mask-provenance and
 grouped program-ID coverage remain outside the static proof. No GPU
 compilation or execution has been tested.

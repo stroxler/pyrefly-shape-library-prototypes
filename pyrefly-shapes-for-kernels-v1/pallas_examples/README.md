@@ -38,11 +38,13 @@ kernel receives a **one-dimensional row**; `jax.vmap` maps that row operation
 over the leading matrix dimension. The v1 example supports a 2D input and
 uses `interpret=True` to run on CPU. A typed nested kernel closure replaces
 upstream's `functools.partial` so Pyrefly can check the bound input and output
-ref dimensions. `checked_row_call` keeps the row kernel's Ref signature and
+ref dimensions. `row_layout` keeps the row kernel's Ref signature and
 matches both Ref shapes to `out_shape`. The `vmap` callback explicitly calls
 `as_pallas_input(row)` before invoking the checked callable, then returns its
 one-row result; the narrowly typed `vmap` stub carries the trailing dimension
-through to the 2D return type. The original
+through to the 2D return type. Shared `checked_pallas_call` validates shape
+and dtype even inside `vmap`; tracers do not expose a concrete device for a
+device check. The original
 `@jax.jit` wrapper is omitted from this CPU-focused test. The stub does not
 prove that `next_power_of_2(row_len)` covers every column, and this example
 does not prove that the comparison creating the mask protects every address

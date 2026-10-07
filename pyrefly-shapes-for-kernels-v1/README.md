@@ -10,7 +10,7 @@ JIT, starting with the vector-add body from
 `python/tutorials/01-vector-add.py`. The kernel body is unchanged; the local
 Triton stubs model allocation and mask semantics. Module-level `IntVar` declarations bind
 symbolic `N` and `Block` with legacy-style generics; the kernel uses the same
-`tl.InPointer[[N], [1]]` and `Int[N]` annotations. Triton's source extractor
+`tlt.InPointer[[N], [1]]` and `Int[N]` annotations. Triton's source extractor
 currently only recognizes `def name(`, so PEP 695 function type parameters
 are not suitable for this first runtime probe. This experiment makes no changes
 to Pyrefly core or v0. The independent Pallas fixture runs its original
@@ -56,7 +56,10 @@ indexed-tile pointer types, but the operations that build 2D addresses and
 masks retain specialized v0 stub types. Pallas accepts independently mapped
 2D Refs and contextually types their index-map lambdas, but it cannot prove
 arbitrary index-map arithmetic. A fixture deliberately bypasses the type
-contract to demonstrate the wrong result such a map can produce. Both
+contract to demonstrate the wrong result such a map can produce. Triton's
+matmul host boundary also builds a typed output-tile layout, deriving its
+program count and checking the dimension and block-size arguments at launch;
+the grouped PID mapping inside the kernel remains unchecked. Both
 fixtures keep the upstream kernel statements and exercise the supported CPU
 interpretation mode.
 

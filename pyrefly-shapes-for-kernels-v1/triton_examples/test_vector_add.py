@@ -12,6 +12,7 @@ from shape_extensions import Int, IntVar
 
 from triton_examples.testing import compile_ttir
 from triton_library import host_tensor, tlt
+from triton_library.launch_layout import TiledOutputLayout, tiled_output
 from triton_library.semantic_jit import ConstExpr, semantic_jit
 from triton_library.torch_views import as_host_tensor, checked_vector
 
@@ -59,13 +60,17 @@ def checked_add[Length: IntVar](
     output_view = as_host_tensor(output, host_tensor.Tensor[[Length], [1]])
     output_ptr, _ = checked_vector(output_view, tlt.OutPointer[[Length], [1]])
     if n_elements:
+        layout = tiled_output(
+            output_view,
+            (block_size,),
+            shape_parameters=("n_elements",),
+            tile_parameters=("BLOCK_SIZE",),
+        )
         device = (
             torch.cuda.device(x.device) if x.device.type == "cuda" else nullcontext()
         )
         with device:
-            add_kernel[(triton.cdiv(n_elements, block_size),)](
-                x_ptr, y_ptr, output_ptr, n_elements, block_size
-            )
+            layout.launch(add_kernel, x_ptr, y_ptr, output_ptr, n_elements, block_size)
     return output
 
 
@@ -81,6 +86,33 @@ def add(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
 
 class VectorAddTest(unittest.TestCase):
     """Check the vector-add contract in both Triton execution modes."""
+
+    def test_tiled_layout_checks_vector_launch(self) -> None:
+        output = torch.empty(30)
+        layout = tiled_output(
+            as_host_tensor(output),
+            (16,),
+            shape_parameters=("n_elements",),
+            tile_parameters=("BLOCK_SIZE",),
+        )
+        self.assertEqual(layout.grid, (2,))
+        input_ptr, _ = checked_vector(as_host_tensor(output), tlt.InPointer[[30], [1]])
+        output_ptr, _ = checked_vector(
+            as_host_tensor(output), tlt.OutPointer[[30], [1]]
+        )
+        for name, n_elements, block_size in (
+            ("n_elements", 29, 16),
+            ("BLOCK_SIZE", 30, 32),
+        ):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, name):
+                layout.launch(
+                    add_kernel,
+                    input_ptr,
+                    input_ptr,
+                    output_ptr,
+                    n_elements,
+                    block_size,
+                )
 
     @unittest.skipIf(os.environ.get("TRITON_INTERPRET") == "1", "requires normal JIT")
     def test_jit_annotations(self) -> None:
@@ -200,6 +232,16 @@ class VectorAddTest(unittest.TestCase):
 
 if TYPE_CHECKING:
     typed_input: torch.Tensor[[7]] = torch.arange(7)
+    typed_view = as_host_tensor(typed_input)
+    assert_type(
+        tiled_output(
+            typed_view,
+            (16,),
+            shape_parameters=("n_elements",),
+            tile_parameters=("BLOCK_SIZE",),
+        ),
+        TiledOutputLayout[[7], [16]],
+    )
     assert_type(
         checked_add(as_host_tensor(typed_input), as_host_tensor(typed_input)),
         torch.Tensor[[7]],
