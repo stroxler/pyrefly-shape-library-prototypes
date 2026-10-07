@@ -5,10 +5,11 @@
 
 from collections.abc import Callable
 from types import EllipsisType
-from typing import Literal, overload, Protocol
+from typing import Literal, Protocol, overload
 
 from jax import Array, Int32Array, ShapeDtypeStruct
-from jax.experimental.pallas import mosaic_gpu as gpu, tpu, tpu_sc
+from jax.experimental.pallas import mosaic_gpu as gpu
+from jax.experimental.pallas import tpu, tpu_sc, triton
 from shape_extensions import Int, IntTuple, IntVar
 
 class Tile[Shape: IntTuple]:
@@ -803,6 +804,7 @@ class DeviceIdType:
 ANY: AnyMemorySpace
 no_block_spec: NoBlockSpec
 
+def next_power_of_2(value: int) -> int: ...
 @overload
 def cdiv[Length: IntVar, Block: IntVar](
     length: Int[Length], block: Int[Block]
@@ -1974,6 +1976,8 @@ def pallas_call[Length: IntVar](
     out_shape: ShapeDtypeStruct[[Length]],
     *,
     grid: tuple[()],
+    compiler_params: triton.CompilerParams | None = None,
+    debug: bool = False,
     interpret: bool = False,
 ) -> Callable[[Array[[Length]]], Array[[Length]]]: ...
 @overload

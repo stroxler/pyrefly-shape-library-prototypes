@@ -1,11 +1,9 @@
 """Execute Triton's original vector-add body with static semantic annotations."""
 
-from __future__ import annotations
-
-import inspect
 import os
 import unittest
-from typing import Any, cast
+from contextlib import nullcontext
+from typing import TYPE_CHECKING, Any, assert_type, cast
 
 import torch
 import triton
@@ -13,8 +11,9 @@ import triton.language as tl
 from shape_extensions import Int, IntVar
 
 from triton_examples.testing import compile_ttir
+from triton_library import host_tensor, tlt
 from triton_library.semantic_jit import ConstExpr, semantic_jit
-from triton_library.torch_wrapper import Launch1D, make_torch_wrapper
+from triton_library.torch_views import as_host_tensor, checked_vector
 
 N = IntVar("N")
 Block = IntVar("Block")
@@ -22,9 +21,9 @@ Block = IntVar("Block")
 
 @semantic_jit
 def add_kernel(
-    x_ptr: tl.InPointer[[N]],
-    y_ptr: tl.InPointer[[N]],
-    output_ptr: tl.OutPointer[[N]],
+    x_ptr: tlt.InPointer[[N], [1]],
+    y_ptr: tlt.InPointer[[N], [1]],
+    output_ptr: tlt.OutPointer[[N], [1]],
     n_elements: Int[N],
     BLOCK_SIZE: ConstExpr[Int[Block]],
 ):
@@ -36,6 +35,38 @@ def add_kernel(
     y = tl.load(y_ptr + offsets, mask=mask)
     output = x + y
     tl.store(output_ptr + offsets, output, mask=mask)
+
+
+def checked_add[Length: IntVar](
+    x: host_tensor.Tensor[[Length], [1]],
+    y: host_tensor.Tensor[[Length], [1]],
+    *,
+    block_size: int = 16,
+    output_dtype: torch.dtype = torch.float32,
+) -> torch.Tensor[[Length]]:
+    """Validate host arrays and launch the original vector-add kernel."""
+    if type(block_size) is not int or block_size <= 0 or block_size & (block_size - 1):
+        raise ValueError("block_size must be a positive power of two")
+    if not isinstance(output_dtype, torch.dtype):
+        raise ValueError("output_dtype must be a torch.dtype")
+    x_ptr, n_elements = checked_vector(x, tlt.InPointer[[Length], [1]])
+    y_ptr, y_length = checked_vector(y, tlt.InPointer[[Length], [1]])
+    if y_length != n_elements:
+        raise ValueError("Input lengths must match")
+    if x.device != y.device:
+        raise ValueError("Input devices must match")
+    output = torch.empty((n_elements,), dtype=output_dtype, device=x.device)
+    output_view = as_host_tensor(output, host_tensor.Tensor[[Length], [1]])
+    output_ptr, _ = checked_vector(output_view, tlt.OutPointer[[Length], [1]])
+    if n_elements:
+        device = (
+            torch.cuda.device(x.device) if x.device.type == "cuda" else nullcontext()
+        )
+        with device:
+            add_kernel[(triton.cdiv(n_elements, block_size),)](
+                x_ptr, y_ptr, output_ptr, n_elements, block_size
+            )
+    return output
 
 
 def add(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
@@ -74,6 +105,14 @@ class VectorAddTest(unittest.TestCase):
         )
         self.assertIn("tt.func public @add_kernel", module)
 
+    @unittest.skipIf(os.environ.get("TRITON_INTERPRET") == "1", "requires normal JIT")
+    def test_direct_launch_contract_without_gpu(self) -> None:
+        x = torch.arange(30, dtype=torch.float32)
+        out = torch.empty_like(x)
+        hook = cast(Any, add_kernel).pre_run_hooks[0]
+        with self.assertRaisesRegex(ValueError, r"y_ptr\.shape\[0\]"):
+            hook(x, torch.arange(31, dtype=torch.float32), out, 30, 16)
+
     @unittest.skipUnless(
         os.environ.get("TRITON_INTERPRET") == "1", "requires interpreter"
     )
@@ -87,14 +126,12 @@ class VectorAddTest(unittest.TestCase):
     @unittest.skipUnless(
         os.environ.get("TRITON_INTERPRET") == "1", "requires interpreter"
     )
-    def test_generated_wrapper(self) -> None:
-        add = make_torch_wrapper(add_kernel, Launch1D(16, torch.float32))
-        self.assertEqual(["x", "y"], list(inspect.signature(add).parameters))
+    def test_checked_add(self) -> None:
         for length in (0, 1, 15, 16, 17, 30, 33, 257):
             with self.subTest(length=length):
                 x = torch.arange(length, dtype=torch.float32)
                 y = x * 3
-                result = add(x, y)
+                result = checked_add(as_host_tensor(x), as_host_tensor(y))
                 self.assertEqual(x.shape, result.shape)
                 if length:
                     self.assertNotEqual(x.data_ptr(), result.data_ptr())
@@ -103,40 +140,49 @@ class VectorAddTest(unittest.TestCase):
     @unittest.skipUnless(
         os.environ.get("TRITON_INTERPRET") == "1", "requires interpreter"
     )
-    def test_wrapper_rejects_invalid_inputs(self) -> None:
-        add = make_torch_wrapper(add_kernel, Launch1D(16, torch.float32))
+    def test_checked_add_rejects_invalid_inputs(self) -> None:
         good = torch.arange(30, dtype=torch.float32)
         bad_inputs = (
             ("length", torch.arange(31, dtype=torch.float32)),
             ("one-dimensional", good.reshape(2, 15)),
-            ("contiguous", torch.arange(60, dtype=torch.float32)[::2]),
+            ("stride", torch.arange(60, dtype=torch.float32)[::2]),
         )
         for error, invalid in bad_inputs:
             with self.subTest(error=error):
                 with self.assertRaisesRegex(ValueError, error):
-                    add(good, invalid)
+                    checked_add(
+                        as_host_tensor(good), as_host_tensor(cast(Any, invalid))
+                    )
 
         for block_size in (0, 3):
             with self.subTest(block_size=block_size):
                 with self.assertRaises(ValueError):
-                    make_torch_wrapper(add_kernel, Launch1D(block_size, torch.float32))
+                    checked_add(
+                        as_host_tensor(good),
+                        as_host_tensor(good),
+                        block_size=block_size,
+                    )
 
         with self.assertRaisesRegex(ValueError, "output_dtype"):
-            make_torch_wrapper(add_kernel, Launch1D(16, cast(Any, None)))
+            checked_add(
+                as_host_tensor(good),
+                as_host_tensor(good),
+                output_dtype=cast(Any, None),
+            )
 
     @unittest.skipUnless(
         os.environ.get("TRITON_INTERPRET") == "1", "requires interpreter"
     )
     def test_output_dtype_is_explicit_and_inputs_can_differ(self) -> None:
-        add = make_torch_wrapper(add_kernel, Launch1D(16, torch.float32))
         x = torch.arange(30, dtype=torch.float32)
         y = torch.arange(30, dtype=torch.int32)
-        result = add(x, y)
+        result = checked_add(as_host_tensor(x), as_host_tensor(y))
         self.assertEqual(result.dtype, torch.float32)
         torch.testing.assert_close(result, x + y)
 
-        add_double = make_torch_wrapper(add_kernel, Launch1D(16, torch.float64))
-        double_result = add_double(x, y)
+        double_result = checked_add(
+            as_host_tensor(x), as_host_tensor(y), output_dtype=torch.float64
+        )
         self.assertEqual(double_result.dtype, torch.float64)
         torch.testing.assert_close(double_result, (x + y).to(torch.float64))
 
@@ -144,7 +190,17 @@ class VectorAddTest(unittest.TestCase):
         os.environ.get("TRITON_INTERPRET") == "1", "requires interpreter"
     )
     def test_upstream_block_size(self) -> None:
-        generated_add = make_torch_wrapper(add_kernel, Launch1D(1024, torch.float32))
         x = torch.arange(30, dtype=torch.float32)
         torch.testing.assert_close(add(x, x), x + x)
-        torch.testing.assert_close(generated_add(x=x, y=x), add(x, x))
+        torch.testing.assert_close(
+            checked_add(x=as_host_tensor(x), y=as_host_tensor(x), block_size=1024),
+            add(x, x),
+        )
+
+
+if TYPE_CHECKING:
+    typed_input: torch.Tensor[[7]] = torch.arange(7)
+    assert_type(
+        checked_add(as_host_tensor(typed_input), as_host_tensor(typed_input)),
+        torch.Tensor[[7]],
+    )

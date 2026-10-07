@@ -38,6 +38,9 @@ int32: Int32Dtype
 bfloat16: BFloat16Dtype
 float16: Float16Dtype
 
+def empty[Length: IntVar](
+    shape: tuple[Int[Length]], *, dtype: object
+) -> Array[[Length]]: ...
 def dtype(value: Float16Dtype) -> Float16Dtype: ...
 def ones[Rows: IntVar, Cols: IntVar](
     shape: tuple[Int[Rows], Int[Cols]], *, dtype: object

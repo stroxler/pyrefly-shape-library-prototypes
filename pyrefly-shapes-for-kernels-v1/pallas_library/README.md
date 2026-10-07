@@ -1,20 +1,47 @@
 # Pallas library
 
 `pallas-stubs/` is an independent copy of the v0 JAX/Pallas stub overlay,
-included on v1's Pyrefly search path. `jax_wrapper.py` generates a checked
-one-dimensional host callable from a kernel whose parameters are semantic
-`pl.InRef[[Block]]` and `pl.OutRef[[Block]]` annotations. Unlike Triton, Pallas
-accepts these annotations directly, so the library does not rewrite source or
-wrap the kernel in a JIT decorator.
+included on v1's Pyrefly search path. Unlike Triton, Pallas accepts semantic
+`pl.InRef` and `pl.OutRef` annotations directly; no decorator or source
+rewrite is needed. JAX arrays do not expose the Torch-style element-stride
+contract checked in the Triton experiment.
 
-`Launch1D` supplies the tile size and execution mode. The wrapper verifies
-that all references share a symbolic block dimension, accepts the input
-references as host arguments, checks 1D shape, length, float32 dtype, and
-device at runtime, and derives the output allocation, aligned `BlockSpec`s,
-and ceil-divided grid. This is intentionally restricted to one output and
-float32 inputs; unsupported annotations fail at wrapper construction. JAX
-arrays do not expose the Torch-style element-stride contract checked in the
-Triton experiment. The inferred alignment of input and output tiles depends
-on the `Launch1D` index-map assumption; the types do not prove index-map
-coverage or the kernel's indexing behavior. The dynamic wrapper is not yet
-given a precise host-side static function type.
+`host_input.py` gives a checked host JAX array its own static role;
+`as_pallas_input` checks rank without copying it. `layout.py` brings the grid,
+block dimensions, and contextually typed index-map lambdas into one call.
+`grid_axis` marks ceiling division as a grid dimension, while `BlockIndex`
+tracks the host dimension and block width of each lambda parameter. The
+`vector_layout` and `matmul_layout` constructors check distinct block patterns
+against a Ref-typed kernel and build actual Pallas `BlockSpec` objects. Both
+produce a `Layout` with a typed host input/output signature.
+
+`checked_pallas_call(layout, interpret=...)` uses one parameter-list-generic
+implementation for both patterns: it invokes `pallas_call` and validates
+the input arrays' concrete shape, output dtype, and shared device before
+launch. The matmul layout requires positive dimensions and exact divisibility;
+the vector layout permits a partial last block. Lambda return types reject
+replacing a required grid index with zero or with an unrelated axis, but do
+not prove arbitrary arithmetic, mask correctness, or complete output coverage.
+Pallas supplies ordinary index values at runtime; `BlockIndex` is only a
+static refinement, and the constructor explicitly bridges that difference.
+The pattern-specific layout constructors still require typed signatures and
+runtime checks, so this is not yet an arbitrary-kernel layout API.
+
+`checked_call.py` also explores the explicit boundary for a Pallas
+kernel with one input row Ref, one output row Ref, and an empty grid.
+`checked_row_call(kernel, out_shape=..., grid=(), ...)` checks that the
+kernel's input and output Ref shapes agree with the declared output shape;
+it returns a callable that accepts `Input[[Cols]]` and produces
+`jax.Array[[Cols]]`. At the call site, `as_pallas_input(row)` checks rank and
+views the *unchanged* JAX array as a checked host input. The launcher checks the
+actual input length against `out_shape` before invoking Pallas, which allocates
+and passes the output Ref to the kernel. This static view is specific to a
+full-row input, one output, and `grid=()`; it does not infer a general mapping
+from `BlockSpec` or prove that an arbitrary kernel writes its whole output.
+The general parameter-list mapping needed to remove explicit conversion
+remains future work.
+
+`checked_block_call` and `checked_matmul_call` remain as earlier fixture APIs;
+the vector and matmul examples now exercise the layout constructors and shared
+`checked_pallas_call` instead. Softmax still uses `checked_row_call`, whose
+empty-grid and `vmap` pattern has not yet moved onto the shared path.

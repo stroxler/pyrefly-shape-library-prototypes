@@ -10,7 +10,7 @@ from triton.compiler import ASTSource, make_backend
 def compile_ttir(
     kernel: object,
     signature: dict[str, str],
-    constexprs: dict[str, int],
+    constexprs: dict[str, int | str],
     *,
     target: GPUTarget = GPUTarget("cuda", 80, 32),
 ) -> str:

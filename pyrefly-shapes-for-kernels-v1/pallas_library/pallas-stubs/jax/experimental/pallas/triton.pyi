@@ -33,6 +33,9 @@ from jax.experimental.pallas import (
 )
 from shape_extensions import IntVar
 
+class CompilerParams:
+    def __init__(self, *, num_warps: int, num_stages: int) -> None: ...
+
 def dot[Rows: IntVar, Inner: IntVar, Cols: IntVar](
     lhs: Tile[[Rows, Inner]], rhs: Tile[[Inner, Cols]]
 ) -> Tile[[Rows, Cols]]: ...

@@ -8,6 +8,7 @@ from typing import Any, overload
 
 from shape_extensions import Int, IntVar
 
+def next_power_of_2(value: int) -> int: ...
 def cdiv[Length: IntVar, Block: IntVar](
     value: Int[Length], block: Int[Block]
 ) -> int: ...

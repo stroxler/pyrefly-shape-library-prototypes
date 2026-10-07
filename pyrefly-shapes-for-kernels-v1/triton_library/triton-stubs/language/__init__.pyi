@@ -10,6 +10,8 @@ from typing import Literal, overload
 
 from shape_extensions import Int, IntListLiteral, IntTuple, IntVar
 
+from triton_library.tlt import InPointer, OutPointer
+
 from . import extra, math
 
 class tensor[Tile: IntTuple]:
@@ -567,20 +569,6 @@ def make_tensor_descriptor[Groups: IntVar, BR: IntVar, BC: IntVar](
     strides: list[int],
     block_shape: IntListLiteral[[BR, BC]],
 ) -> tensor_descriptor[int, int, int, BR, BC]: ...
-@overload
-def make_tensor_descriptor[Rows: IntVar, Cols: IntVar, BR: IntVar, BC: IntVar](
-    ptr: InMatrixPointer[Rows, Cols, Cols, 1],
-    shape: IntListLiteral[[Rows, Cols]],
-    strides: IntListLiteral[[Cols, 1]],
-    block_shape: IntListLiteral[[BR, BC]],
-) -> InputMatrixDescriptor[Rows, Cols, Cols, BR, BC]: ...
-@overload
-def make_tensor_descriptor[Rows: IntVar, Cols: IntVar, BR: IntVar, BC: IntVar](
-    ptr: OutMatrixPointer[Rows, Cols, Cols, 1],
-    shape: IntListLiteral[[Rows, Cols]],
-    strides: IntListLiteral[[Cols, 1]],
-    block_shape: IntListLiteral[[BR, BC]],
-) -> OutputMatrixDescriptor[Rows, Cols, Cols, BR, BC]: ...
 
 class ProgramId:
     def __mul__[Block: IntVar](self, block: Int[Block]) -> TileStart[[Block]]: ...
@@ -682,7 +670,9 @@ class TileStart[Tile: IntTuple](int):
         self, offsets: ColumnAxisOffsets[Cols]
     ) -> ColumnAxisOffsets[Cols]: ...
     @overload
-    def __add__(self, offsets: Offsets[Tile]) -> Offsets[Tile]: ...
+    def __add__(
+        self, offsets: Offsets[Tile, 1, Literal["local"]]
+    ) -> Offsets[Tile, 1, Literal["program"]]: ...
 
 class ScaledTileStart[HeadDim: IntVar, Tokens: IntVar]:
     def __iadd__(self, step: Int[HeadDim]) -> ScaledTileStart[HeadDim, Tokens]: ...
@@ -695,19 +685,25 @@ class SplitAddress[Stride: IntVar]: ...
 class SplitStride[Stride: IntVar](int):
     def __rmul__(self, index: int) -> SplitAddress[Stride]: ...
 
-class Offsets[Tile: IntTuple]:
-    def to(self, dtype: object) -> Offsets[Tile]: ...
+class Offsets[Tile: IntTuple, Stride: IntVar = 1, Origin: str = Literal["local"]]:
+    def to(self, dtype: object) -> Offsets[Tile, Stride, Origin]: ...
     def __add__(self, value: int) -> tensor[Tile]: ...
-    def __lt__[N: IntVar](self, bound: Int[N]) -> Mask[[N], Tile]: ...
-    def __radd__(self, start: int) -> Offsets[Tile]: ...
+    def __lt__[N: IntVar](
+        self: Offsets[Tile, 1, Origin], bound: Int[N]
+    ) -> Mask[[N], Tile, Origin]: ...
+    def __radd__(self, start: int) -> Offsets[Tile, Stride, Literal["shifted"]]: ...
     def __mod__[N: IntVar](self, bound: Int[N]) -> WrappedOffsets[N, Tile]: ...
-    def __mul__[Stride: IntVar](
-        self, stride: Int[Stride]
-    ) -> ScaledOffsets[Tile, Stride]: ...
+    def __mul__[Step: IntVar](
+        self, stride: Int[Step]
+    ) -> ScaledOffsets[Tile, Step, Origin]: ...
     @overload
-    def __getitem__(self, index: tuple[slice, None]) -> RowAxisOffsets[Tile]: ...
+    def __getitem__(
+        self, index: tuple[slice, None]
+    ) -> RowAxisOffsets[Tile, Stride]: ...
     @overload
-    def __getitem__(self, index: tuple[None, slice]) -> ColumnAxisOffsets[Tile]: ...
+    def __getitem__(
+        self, index: tuple[None, slice]
+    ) -> ColumnAxisOffsets[Tile, Stride]: ...
 
 class WrappedOffsets[Dim: IntVar, Tile: IntTuple]:
     @overload
@@ -731,33 +727,37 @@ class ClampedOffsets[Dim: IntVar, Tile: IntTuple]:
         self, index: tuple[None, slice]
     ) -> ClampedColumnAxisOffsets[Dim, Tile]: ...
 
-class RowAxisOffsets[Tile: IntTuple]:
+class RowAxisOffsets[Tile: IntTuple, Stride: IntVar = 1]:
     def __ge__[Rows: IntVar, Cols: IntVar](
         self: RowAxisOffsets[[Rows]], other: ColumnAxisOffsets[[Cols]]
     ) -> tensor[[Rows, Cols]]: ...
-    def __lt__[Dim: IntVar](self, bound: Int[Dim]) -> RowMask[Dim, Tile]: ...
-    def __mul__[Stride: IntVar](
-        self, stride: Int[Stride]
-    ) -> RowAddress[Tile, Stride]: ...
-    def __rmul__[Stride: IntVar](
-        self, stride: Int[Stride]
-    ) -> RowAddress[Tile, Stride]: ...
+    def __lt__[Dim: IntVar](
+        self: RowAxisOffsets[Tile, 1], bound: Int[Dim]
+    ) -> RowMask[Dim, Tile]: ...
+    def __mul__[Step: IntVar](
+        self: RowAxisOffsets[Tile, 1], stride: Int[Step]
+    ) -> RowAddress[Tile, Step]: ...
+    def __rmul__[Step: IntVar](
+        self: RowAxisOffsets[Tile, 1], stride: Int[Step]
+    ) -> RowAddress[Tile, Step]: ...
     def __add__[Rows: IntVar, Cols: IntVar, Stride: IntVar](
         self: RowAxisOffsets[[Rows]], other: ColumnAddress[[Cols], Stride]
     ) -> ColumnMajorMatrixOffsets[Rows, Cols, Stride]: ...
 
-class ColumnAxisOffsets[Tile: IntTuple]:
+class ColumnAxisOffsets[Tile: IntTuple, Stride: IntVar = 1]:
     def __ge__[Rows: IntVar, Cols: IntVar](
         self: ColumnAxisOffsets[[Cols]], other: RowAxisOffsets[[Rows]]
     ) -> tensor[[Rows, Cols]]: ...
-    def __radd__(self, start: int) -> ColumnAxisOffsets[Tile]: ...
-    def __lt__[Dim: IntVar](self, bound: Int[Dim]) -> ColumnMask[Dim, Tile]: ...
-    def __mul__[Stride: IntVar](
-        self, stride: Int[Stride]
-    ) -> ColumnAddress[Tile, Stride]: ...
-    def __rmul__[Stride: IntVar](
-        self, stride: Int[Stride]
-    ) -> ColumnAddress[Tile, Stride]: ...
+    def __radd__(self, start: int) -> ColumnAxisOffsets[Tile, Stride]: ...
+    def __lt__[Dim: IntVar](
+        self: ColumnAxisOffsets[Tile, 1], bound: Int[Dim]
+    ) -> ColumnMask[Dim, Tile]: ...
+    def __mul__[Step: IntVar](
+        self: ColumnAxisOffsets[Tile, 1], stride: Int[Step]
+    ) -> ColumnAddress[Tile, Step]: ...
+    def __rmul__[Step: IntVar](
+        self: ColumnAxisOffsets[Tile, 1], stride: Int[Step]
+    ) -> ColumnAddress[Tile, Step]: ...
 
 class WrappedRowAxisOffsets[Dim: IntVar, Tile: IntTuple]:
     def __mul__[Stride: IntVar](
@@ -796,7 +796,9 @@ class RowAddress[Tile: IntTuple, Stride: IntVar]:
 class GroupedMatrixOffsets[TileRows: IntTuple, TileCols: IntTuple, Stride: IntVar]: ...
 class ColumnAddress[Tile: IntTuple, Stride: IntVar]: ...
 class ColumnMajorMatrixOffsets[Rows: IntVar, Cols: IntVar, Stride: IntVar]: ...
-class ScaledOffsets[Tile: IntTuple, Stride: IntVar]: ...
+class ScaledOffsets[Tile: IntTuple, Stride: IntVar, Origin: str = Literal["local"]](
+    Offsets[Tile, Stride, Origin]
+): ...
 
 # Grouped GEMM receives device arrays of raw addresses and packed metadata.
 # Their common group count does not prove that entry g in each array agrees.
@@ -924,52 +926,6 @@ class MatrixMask[
     TileCols: IntTuple,
 ]: ...
 
-class InMatrixPointer[Rows: IntVar, Cols: IntVar, RowStride: IntVar, ColStride: IntVar]:
-    @overload
-    def __add__[TileRows: IntVar](
-        self, address: WrappedRowAddress[Rows, [TileRows], RowStride]
-    ) -> InMatrixWrappedRows[Rows, Cols, TileRows, RowStride, ColStride]: ...
-    @overload
-    def __add__[TileRows: IntVar](
-        self, address: RowAddress[[TileRows], RowStride]
-    ) -> InMatrixRows[Rows, Cols, TileRows, RowStride, ColStride]: ...
-    @overload
-    def __add__[TileRows: IntVar, TileCols: IntVar](
-        self,
-        address: WrappedRowMatrixAddress[
-            Rows, [TileRows], [TileCols], RowStride, ColStride
-        ],
-    ) -> WrappedRowMatrixTilePointers[
-        Rows, Cols, TileRows, TileCols, RowStride, ColStride
-    ]: ...
-    @overload
-    def __add__[TileRows: IntVar, TileCols: IntVar](
-        self,
-        address: WrappedColumnMatrixAddress[
-            Cols, [TileRows], [TileCols], RowStride, ColStride
-        ],
-    ) -> WrappedColumnMatrixTilePointers[
-        Rows, Cols, TileRows, TileCols, RowStride, ColStride
-    ]: ...
-    @overload
-    def __add__[TileRows: IntVar, TileCols: IntVar](
-        self,
-        address: ClampedRowMatrixAddress[
-            Rows, [TileRows], [TileCols], RowStride, ColStride
-        ],
-    ) -> ClampedRowMatrixTilePointers[
-        Rows, Cols, TileRows, TileCols, RowStride, ColStride
-    ]: ...
-    @overload
-    def __add__[TileRows: IntVar, TileCols: IntVar](
-        self,
-        address: ClampedColumnMatrixAddress[
-            Cols, [TileRows], [TileCols], RowStride, ColStride
-        ],
-    ) -> ClampedColumnMatrixTilePointers[
-        Rows, Cols, TileRows, TileCols, RowStride, ColStride
-    ]: ...
-
 # The CDNA4 FP4 operand stores two logical K elements per packed byte.
 class CDNA4PackedAPointer[
     Rows: IntVar,
@@ -1023,99 +979,8 @@ class CDNA4PackedBTilePointers[
         self, step: Int[(BlockK // 2) * KStride]
     ) -> CDNA4PackedBTilePointers[Cols, PackedK, BlockCols, BlockK, KStride]: ...
 
-class InMatrixWrappedRows[
-    Rows: IntVar,
-    Cols: IntVar,
-    TileRows: IntVar,
-    RowStride: IntVar,
-    ColStride: IntVar,
-]:
-    def __add__[TileCols: IntVar](
-        self, address: ColumnAddress[[TileCols], ColStride]
-    ) -> WrappedRowMatrixTilePointers[
-        Rows, Cols, TileRows, TileCols, RowStride, ColStride
-    ]: ...
-
-class InMatrixRows[
-    Rows: IntVar,
-    Cols: IntVar,
-    TileRows: IntVar,
-    RowStride: IntVar,
-    ColStride: IntVar,
-]:
-    def __add__[TileCols: IntVar](
-        self, address: WrappedColumnAddress[Cols, [TileCols], ColStride]
-    ) -> WrappedColumnMatrixTilePointers[
-        Rows, Cols, TileRows, TileCols, RowStride, ColStride
-    ]: ...
-
 class PointerDType:
     element_ty: object
-
-class OutMatrixPointer[
-    Rows: IntVar,
-    Cols: IntVar,
-    RowStride: IntVar,
-    ColStride: IntVar,
-]:
-    dtype: PointerDType
-    type: PointerDType
-    def __add__[TileRows: IntVar](
-        self, address: RowAddress[[TileRows], RowStride]
-    ) -> OutMatrixRows[Rows, Cols, TileRows, ColStride]: ...
-
-class OutMatrixRows[Rows: IntVar, Cols: IntVar, TileRows: IntVar, ColStride: IntVar]:
-    def __add__[TileCols: IntVar](
-        self, address: ColumnAddress[[TileCols], ColStride]
-    ) -> OutMatrixTilePointers[Rows, Cols, TileRows, TileCols]: ...
-
-class ZeroedOutMatrixPointer[
-    Rows: IntVar,
-    Cols: IntVar,
-    RowStride: IntVar,
-    ColStride: IntVar,
-](OutMatrixPointer[Rows, Cols, RowStride, ColStride]):
-    def __add__[TileRows: IntVar](
-        self, address: RowAddress[[TileRows], RowStride]
-    ) -> ZeroedOutMatrixRows[Rows, Cols, TileRows, ColStride]: ...
-
-class ZeroedOutMatrixRows[
-    Rows: IntVar,
-    Cols: IntVar,
-    TileRows: IntVar,
-    ColStride: IntVar,
-](OutMatrixRows[Rows, Cols, TileRows, ColStride]):
-    def __add__[TileCols: IntVar](
-        self, address: ColumnAddress[[TileCols], ColStride]
-    ) -> ZeroedOutMatrixTilePointers[Rows, Cols, TileRows, TileCols]: ...
-
-class WrappedRowMatrixTilePointers[
-    Rows: IntVar,
-    Cols: IntVar,
-    TileRows: IntVar,
-    TileCols: IntVar,
-    RowStride: IntVar,
-    ColStride: IntVar,
-]:
-    def __iadd__(
-        self, increment: Int[TileCols * ColStride]
-    ) -> WrappedRowMatrixTilePointers[
-        Rows, Cols, TileRows, TileCols, RowStride, ColStride
-    ]: ...
-
-class WrappedColumnMatrixTilePointers[
-    Rows: IntVar,
-    Cols: IntVar,
-    TileRows: IntVar,
-    TileCols: IntVar,
-    RowStride: IntVar,
-    ColStride: IntVar,
-]:
-    def __iadd__(
-        self, increment: Int[TileRows * RowStride]
-    ) -> WrappedColumnMatrixTilePointers[
-        Rows, Cols, TileRows, TileCols, RowStride, ColStride
-    ]: ...
 
 class ClampedRowMatrixTilePointers[
     Rows: IntVar,
@@ -1144,19 +1009,6 @@ class ClampedColumnMatrixTilePointers[
     ) -> ClampedColumnMatrixTilePointers[
         Rows, Cols, TileRows, TileCols, RowStride, ColStride
     ]: ...
-
-class OutMatrixTilePointers[
-    Rows: IntVar,
-    Cols: IntVar,
-    TileRows: IntVar,
-    TileCols: IntVar,
-]: ...
-class ZeroedOutMatrixTilePointers[
-    Rows: IntVar,
-    Cols: IntVar,
-    TileRows: IntVar,
-    TileCols: IntVar,
-](OutMatrixTilePointers[Rows, Cols, TileRows, TileCols]): ...
 
 class Scratch3DPointer[
     Split: IntVar,
@@ -1205,36 +1057,74 @@ class ScratchTilePointers[
     TileCols: IntVar,
 ]: ...
 
-class Mask[Target: IntTuple, Tile: IntTuple]:
+class Mask[Target: IntTuple, Tile: IntTuple, Origin: str = Literal["local"]]:
     def __getitem__[Rows: IntVar, BR: IntVar](
         self: Mask[[Rows], [BR]], index: tuple[slice, None]
     ) -> RowMask[Rows, [BR]]: ...
 
-class InPointer[Target: IntTuple]:
-    @overload
-    def __add__(self, row: ProgramId) -> InScalarPointer[Target]: ...
-    @overload
-    def __add__[Tile: IntTuple](
-        self, offsets: Offsets[Tile]
-    ) -> InTilePointers[Target, Tile]: ...
-    @overload
-    def __add__[Cols: IntVar, BC: IntVar](
-        self: InPointer[[Cols]], offsets: ColumnAxisOffsets[[BC]]
-    ) -> InColumnTilePointers[Cols, BC]: ...
-
-class OutPointer[Target: IntTuple]:
-    @overload
-    def __add__(self, row: ProgramId) -> OutScalarPointer[Target]: ...
-    @overload
-    def __add__[Tile: IntTuple](
-        self, offsets: Offsets[Tile]
-    ) -> OutTilePointers[Target, Tile]: ...
-
 class InScalarPointer[Target: IntTuple]: ...
 class OutScalarPointer[Target: IntTuple]: ...
-class InTilePointers[Target: IntTuple, Tile: IntTuple]: ...
+
+class InTilePointers[
+    Target: IntTuple,
+    Strides: IntTuple,
+    Tile: IntTuple,
+    Origin: str = Literal["local"],
+]:
+    @overload
+    def __iadd__[
+        Rows: IntVar,
+        Cols: IntVar,
+        RS: IntVar,
+        CS: IntVar,
+        TileRows: IntVar,
+        TileCols: IntVar,
+    ](
+        self: InTilePointers[
+            [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_0"]
+        ],
+        step: Int[TileCols * CS],
+    ) -> InTilePointers[
+        [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_0"]
+    ]: ...
+    @overload
+    def __iadd__[
+        Rows: IntVar,
+        Cols: IntVar,
+        RS: IntVar,
+        CS: IntVar,
+        TileRows: IntVar,
+        TileCols: IntVar,
+    ](
+        self: InTilePointers[
+            [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_1"]
+        ],
+        step: Int[TileRows * RS],
+    ) -> InTilePointers[
+        [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_1"]
+    ]: ...
+
 class InColumnTilePointers[Cols: IntVar, BC: IntVar]: ...
-class OutTilePointers[Target: IntTuple, Tile: IntTuple]: ...
+
+class OutTilePointers[
+    Target: IntTuple,
+    Strides: IntTuple,
+    Tile: IntTuple,
+    Origin: str = Literal["local"],
+]:
+    def __add__[
+        Rows: IntVar,
+        Cols: IntVar,
+        RS: IntVar,
+        CS: IntVar,
+        TileRows: IntVar,
+        TileCols: IntVar,
+    ](
+        self: OutTilePointers[[Rows, Cols], [RS, CS], [TileRows, 1], Literal["axis_0"]],
+        address: ColumnAddress[[TileCols], CS],
+    ) -> OutTilePointers[
+        [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["indexed"]
+    ]: ...
 
 # The unmasked transpose uses contiguous input [M, N] and output [N, M].
 # These roles retain shapes and strides but do not establish address bounds.
@@ -1393,34 +1283,6 @@ class Out2DRowMajorPointer[Rows: IntVar, Cols: IntVar, Stride: IntVar, BM: IntVa
 
 class In2DRowTilePointers[Rows: IntVar, Cols: IntVar, BM: IntVar, BN: IntVar]: ...
 class Out2DRowTilePointers[Rows: IntVar, Cols: IntVar, BM: IntVar, BN: IntVar]: ...
-
-# Matrix pointers promise a unit-stride inner axis; row strides remain explicit.
-class InRowMajorPointer[Rows: IntVar, Cols: IntVar, Stride: IntVar]:
-    @overload
-    def __add__(self, offset: TileStart[[Stride]]) -> InRowPointer[Rows, Cols]: ...
-    def __iadd__(
-        self, offset: TileStart[[Stride]]
-    ) -> InRowMajorPointer[Rows, Cols, Stride]: ...
-    @overload
-    def __add__(self, offset: RowOffset[Rows, Stride]) -> InRowPointer[Rows, Cols]: ...
-    @overload
-    def __add__[Tile: IntTuple](
-        self, offsets: Offsets[Tile]
-    ) -> InRowTilePointers[Rows, Cols, Tile]: ...
-
-class OutRowMajorPointer[Rows: IntVar, Cols: IntVar, Stride: IntVar]:
-    @overload
-    def __add__(self, offset: TileStart[[Stride]]) -> OutRowPointer[Rows, Cols]: ...
-    def __iadd__(
-        self, offset: TileStart[[Stride]]
-    ) -> OutRowMajorPointer[Rows, Cols, Stride]: ...
-    @overload
-    def __add__(self, offset: RowOffset[Rows, Stride]) -> OutRowPointer[Rows, Cols]: ...
-    @overload
-    def __add__[Tile: IntTuple](
-        self, offsets: Offsets[Tile]
-    ) -> OutRowTilePointers[Rows, Cols, Tile]: ...
-
 class RowOffset[Rows: IntVar, Stride: IntVar]: ...
 
 class RowIndex[Rows: IntVar]:
@@ -1430,19 +1292,6 @@ class RowIndex[Rows: IntVar]:
 
 class RowRange[Rows: IntVar]:
     def __iter__(self) -> Iterator[RowIndex[Rows]]: ...
-
-class InRowPointer[Rows: IntVar, Cols: IntVar]:
-    def __add__[Tile: IntTuple](
-        self, offsets: Offsets[Tile]
-    ) -> InRowTilePointers[Rows, Cols, Tile]: ...
-
-class OutRowPointer[Rows: IntVar, Cols: IntVar]:
-    def __add__[Tile: IntTuple](
-        self, offsets: Offsets[Tile]
-    ) -> OutRowTilePointers[Rows, Cols, Tile]: ...
-
-class InRowTilePointers[Rows: IntVar, Cols: IntVar, Tile: IntTuple]: ...
-class OutRowTilePointers[Rows: IntVar, Cols: IntVar, Tile: IntTuple]: ...
 
 @overload
 def program_id(axis: Literal[2]) -> AttentionBatchHeadProgramId: ...
@@ -1780,16 +1629,49 @@ def load[Tokens: IntVar, BM: IntVar](
 @overload
 def load[Groups: IntVar](ptr: CountPointer[Groups]) -> tensor[[]]: ...
 @overload
-def load[Target: IntTuple, Tile: IntTuple](
-    ptrs: InTilePointers[Target, Tile], mask: Mask[Target, Tile]
+def load[Target: IntTuple, Strides: IntTuple, Tile: IntTuple, Origin: str](
+    ptrs: InTilePointers[Target, Strides, Tile, Origin],
+    mask: Mask[Target, Tile, Origin],
 ) -> tensor[Tile]: ...
 @overload
-def load[Target: IntTuple, Tile: IntTuple](
-    ptrs: InTilePointers[Target, Tile],
-    mask: Mask[Target, Tile],
+def load[Target: IntTuple, Strides: IntTuple, Tile: IntTuple, Origin: str](
+    ptrs: InTilePointers[Target, Strides, Tile, Origin],
+    mask: Mask[Target, Tile, Origin],
     *,
     other: float,
 ) -> tensor[Tile]: ...
+@overload
+def load[
+    Rows: IntVar,
+    Cols: IntVar,
+    RS: IntVar,
+    CS: IntVar,
+    TileRows: IntVar,
+    TileCols: IntVar,
+](
+    ptrs: InTilePointers[
+        [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_0"]
+    ],
+    mask: ColumnMask[Cols, [TileCols]],
+    *,
+    other: float,
+) -> tensor[[TileRows, TileCols]]: ...
+@overload
+def load[
+    Rows: IntVar,
+    Cols: IntVar,
+    RS: IntVar,
+    CS: IntVar,
+    TileRows: IntVar,
+    TileCols: IntVar,
+](
+    ptrs: InTilePointers[
+        [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_1"]
+    ],
+    mask: RowMask[Rows, [TileRows]],
+    *,
+    other: float,
+) -> tensor[[TileRows, TileCols]]: ...
 @overload
 def load[Cols: IntVar, BN: IntVar](
     ptrs: InColumnTilePointers[Cols, BN], mask: ColumnMask[Cols, [BN]]
@@ -1810,41 +1692,6 @@ def load[Groups: IntVar, Cols: IntVar, Tile: IntVar](
 def load[Groups: IntVar, Cols: IntVar, TileRows: IntVar, TileCols: IntVar](
     ptrs: GroupedScratchMatrixPointers[Groups, Cols, TileRows, TileCols],
     mask: MatrixMask[Groups, Cols, [TileRows], [TileCols]],
-    *,
-    other: float,
-) -> tensor[[TileRows, TileCols]]: ...
-@overload
-def load[Rows: IntVar, Cols: IntVar, Tile: IntTuple](
-    ptrs: InRowTilePointers[Rows, Cols, Tile],
-    mask: Mask[[Cols], Tile],
-    *,
-    other: float,
-) -> tensor[Tile]: ...
-@overload
-def load[
-    Rows: IntVar,
-    Cols: IntVar,
-    TileRows: IntVar,
-    TileCols: IntVar,
-    RS: IntVar,
-    CS: IntVar,
-](
-    ptrs: WrappedRowMatrixTilePointers[Rows, Cols, TileRows, TileCols, RS, CS],
-    mask: ColumnMask[Cols, [TileCols]],
-    *,
-    other: float,
-) -> tensor[[TileRows, TileCols]]: ...
-@overload
-def load[
-    Rows: IntVar,
-    Cols: IntVar,
-    TileRows: IntVar,
-    TileCols: IntVar,
-    RS: IntVar,
-    CS: IntVar,
-](
-    ptrs: WrappedColumnMatrixTilePointers[Rows, Cols, TileRows, TileCols, RS, CS],
-    mask: RowMask[Rows, [TileRows]],
     *,
     other: float,
 ) -> tensor[[TileRows, TileCols]]: ...
@@ -1942,18 +1789,23 @@ def store[Groups: IntVar, Cols: IntVar, Tile: IntVar](
     mask: Mask[[Cols], [Tile]],
 ) -> None: ...
 @overload
-def store[Target: IntTuple, Tile: IntTuple](
-    ptrs: OutTilePointers[Target, Tile], value: tensor[Tile], mask: Mask[Target, Tile]
-) -> None: ...
-@overload
-def store[Rows: IntVar, Cols: IntVar, Tile: IntTuple](
-    ptrs: OutRowTilePointers[Rows, Cols, Tile],
+def store[Target: IntTuple, Strides: IntTuple, Tile: IntTuple, Origin: str](
+    ptrs: OutTilePointers[Target, Strides, Tile, Origin],
     value: tensor[Tile],
-    mask: Mask[[Cols], Tile],
+    mask: Mask[Target, Tile, Origin],
 ) -> None: ...
 @overload
-def store[Rows: IntVar, Cols: IntVar, TileRows: IntVar, TileCols: IntVar](
-    ptrs: OutMatrixTilePointers[Rows, Cols, TileRows, TileCols],
+def store[
+    Rows: IntVar,
+    Cols: IntVar,
+    RS: IntVar,
+    CS: IntVar,
+    TileRows: IntVar,
+    TileCols: IntVar,
+](
+    ptrs: OutTilePointers[
+        [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["indexed"]
+    ],
     value: tensor[[TileRows, TileCols]],
     mask: MatrixMask[Rows, Cols, [TileRows], [TileCols]],
     cache_modifier: Literal[".wt"] | None = None,
@@ -1981,12 +1833,6 @@ def atomic_add[Tokens: IntVar, Dim: IntVar, BM: IntVar](
     ptrs: ZeroedAttentionOutputTilePointers[Tokens, Dim, BM],
     value: tensor[[BM, Dim]],
 ) -> tensor[[BM, Dim]]: ...
-@overload
-def atomic_add[Rows: IntVar, Cols: IntVar, TileRows: IntVar, TileCols: IntVar](
-    ptrs: ZeroedOutMatrixTilePointers[Rows, Cols, TileRows, TileCols],
-    value: tensor[[TileRows, TileCols]],
-    mask: MatrixMask[Rows, Cols, [TileRows], [TileCols]],
-) -> tensor[[TileRows, TileCols]]: ...
 @overload
 def max[Block: IntVar](value: tensor[[Block]], axis: Literal[0]) -> tensor[[]]: ...
 @overload

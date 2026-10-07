@@ -10,6 +10,11 @@ from jax.numpy import BFloat16Dtype, Float16Dtype, Int32Dtype
 from shape_extensions import Int, IntTuple, IntVar
 
 class Array[Shape: IntTuple]:
+    @property
+    def ndim(self) -> int: ...
+    @property
+    def device(self) -> object: ...
+    def tolist(self) -> object: ...
     @overload
     def __getitem__[Rows: IntVar](
         self: Array[[Rows]], key: tuple[slice, None]
@@ -134,7 +139,14 @@ class DoubleMappedRmsNorm[Length: IntVar]:
         bias: Array[[Length]],
     ) -> tuple[Array[[Batch, Rows, Length]], Array[[Batch, Rows]]]: ...
 
+class MappedUnaryRows[Cols: IntVar]:
+    def __call__[Rows: IntVar](self, x: Array[[Rows, Cols]]) -> Array[[Rows, Cols]]: ...
+
 def jit[**P, R](f: Callable[P, R]) -> Callable[P, R]: ...
+@overload
+def vmap[Cols: IntVar](
+    f: Callable[[Array[[Cols]]], Array[[Cols]]],
+) -> MappedUnaryRows[Cols]: ...
 @overload
 def vmap[Length: IntVar](
     f: Callable[
@@ -216,6 +228,18 @@ def shard_map[Devices: IntVar, InputRows: IntVar, Rows: IntVar, Cols: IntVar](
 ) -> Callable[[Array[[InputRows, Devices * Cols]]], Array[[Devices * Rows, Cols]]]: ...
 
 class ShapeDtypeStruct[Shape: IntTuple]:
+    @property
+    def dtype(self) -> object: ...
+    @overload
+    @property
+    def shape[Length: IntVar](
+        self: ShapeDtypeStruct[[Length]],
+    ) -> tuple[Int[Length]]: ...
+    @overload
+    @property
+    def shape[Rows: IntVar, Cols: IntVar](
+        self: ShapeDtypeStruct[[Rows, Cols]],
+    ) -> tuple[Int[Rows], Int[Cols]]: ...
     @classmethod
     def like(cls, array: Array[Shape]) -> ShapeDtypeStruct[Shape]: ...
     @overload
