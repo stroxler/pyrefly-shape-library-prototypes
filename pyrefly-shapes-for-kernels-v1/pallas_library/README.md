@@ -25,7 +25,7 @@ states its Pallas block shape and index map. `GridBinding` identifies an
 output axis and its per-program block width. Shared axis names must have
 equal host extents even when their arrays have different ranks; `None` in a
 block shape removes that host axis from the kernel Ref. See
-[concrete layouts](LAYOUT_BINDINGS.md) for every current example.
+[representative layouts](LAYOUT_BINDINGS.md) for several current examples.
 
 `checked_pallas_call(layout, interpret=...)` uses one parameter-list-generic
 implementation for these patterns: it invokes `pallas_call` and validates

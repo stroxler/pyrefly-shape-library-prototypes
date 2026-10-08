@@ -1,5 +1,0 @@
-search_path = [
-    ".",
-    "pallas-stubs",
-]
-python-interpreter-path = "../../.venv/bin/python"

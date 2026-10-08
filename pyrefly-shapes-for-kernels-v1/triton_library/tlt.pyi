@@ -51,9 +51,9 @@ class InPointer[Target: IntTuple, Strides: IntTuple]:
         start: tl.ScaledTileStart[Dim, Tokens],
     ) -> tl.Attention4DHeadPointer[Batch, Heads, Tokens, Dim]: ...
     @overload
-    def __add__[GridAxis: int](
-        self, row: tl.ProgramId[GridAxis]
-    ) -> tl.InScalarPointer[Target]: ...
+    def __add__[Length: IntVar, GridAxis: int](
+        self: InPointer[[Length], [1]], row: tl.ProgramId[GridAxis]
+    ) -> tl.InScalarPointer[[Length]]: ...
     @overload
     def __add__[
         Length: IntVar, Stride: IntVar, Tile: IntTuple, Origin: str, GridAxis: int
@@ -181,9 +181,9 @@ class OutPointer[Target: IntTuple, Strides: IntTuple]:
         start: tl.TileStart[[Tokens], Axis],
     ) -> tl.Attention3DHeadPointer[Batch, Heads, Tokens]: ...
     @overload
-    def __add__[GridAxis: int](
-        self, row: tl.ProgramId[GridAxis]
-    ) -> tl.OutScalarPointer[Target]: ...
+    def __add__[Length: IntVar, GridAxis: int](
+        self: OutPointer[[Length], [1]], row: tl.ProgramId[GridAxis]
+    ) -> tl.OutScalarPointer[[Length]]: ...
     @overload
     def __add__[
         Length: IntVar, Stride: IntVar, Tile: IntTuple, Origin: str, GridAxis: int

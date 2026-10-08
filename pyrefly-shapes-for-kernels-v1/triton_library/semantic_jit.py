@@ -15,6 +15,7 @@ from triton.runtime.interpreter import InterpretedFunction
 from triton.runtime.jit import JITFunction
 
 from triton_library import tlt
+from triton_library.torch_views import validate_output_nonoverlap
 
 type ConstExpr[T] = Annotated[T, "triton.constexpr"]
 
@@ -140,14 +141,8 @@ def _validate_pointer_arguments(
             zip(strides, value.stride(), strict=True)
         ):
             check(stride, actual, f"{name}.stride({index})")
-        if (
-            kind in (tlt.OutPointer, tlt.InOutPointer)
-            and value.ndim == 2
-            and value.stride(1) == 1
-            and value.shape[0] > 1
-            and value.stride(0) < value.shape[1]
-        ):
-            raise ValueError(f"{name} must not have overlapping elements")
+        if kind in (tlt.OutPointer, tlt.InOutPointer):
+            validate_output_nonoverlap(value)
 
     for name, value in bound.arguments.items():
         annotation = annotations.get(name)
@@ -161,23 +156,33 @@ def _validate_pointer_arguments(
 
 def semantic_jit[F: Callable[..., object]](fn: F) -> SemanticKernel[F]:
     """Translate semantic annotations for both the compiler and interpreter."""
-    # Postponed annotations need evaluation only for the runtime-checkable markers.
+    # Postponed annotations need evaluation only for runtime-checkable markers,
+    # including direct imports or aliases of those marker classes.
+    runtime_markers = (tlt.InPointer, tlt.OutPointer, tlt.InOutPointer, Int, ConstExpr)
+
+    def runtime_annotation(annotation: object) -> object:
+        if not isinstance(annotation, str):
+            return annotation
+        root = annotation.split("[", 1)[0]
+        if annotation.startswith(
+            (
+                "tlt.InPointer[",
+                "tlt.OutPointer[",
+                "tlt.InOutPointer[",
+                "Int[",
+                "ConstExpr[",
+            )
+        ) or any(fn.__globals__.get(root) is marker for marker in runtime_markers):
+            return eval(annotation, fn.__globals__)
+        if annotation.startswith("tlt."):
+            raise ValueError(f"Unsupported Triton semantic annotation: {annotation}")
+        return annotation
+
     setattr(
         fn,
         "__semantic_annotations__",
         {
-            name: eval(annotation, fn.__globals__)
-            if isinstance(annotation, str)
-            and annotation.startswith(
-                (
-                    "tlt.InPointer[",
-                    "tlt.OutPointer[",
-                    "tlt.InOutPointer[",
-                    "Int[",
-                    "ConstExpr[",
-                )
-            )
-            else annotation
+            name: runtime_annotation(annotation)
             for name, annotation in fn.__annotations__.items()
         },
     )

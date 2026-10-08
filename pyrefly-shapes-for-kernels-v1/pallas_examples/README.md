@@ -1,5 +1,27 @@
 # Pallas examples
 
+`test_iota.py` models the quickstart's full-output Ref indexed by a program
+ID, with one program per element and no input or block spec. It rejects a
+different grid length statically and invalid grid length at runtime;
+`test_shard_map_boundary.py` checks the global/local `[Devices*Rows,Cols]`
+relationship through `jax.shard_map`, including a two-device CPU test when
+available. These are distinct from tiled `BlockSpec` kernels: a general
+Pallas boundary must not assume every Ref is one block of a grid tile.
+
+`test_tpu_vector_add.py` models a TPU launch of the Pallas quickstart's
+vector-add body. `test_tpu_matmul.py` models the TPU guide's three-axis
+tiled matmul. `test_decode_attention.py` models an unbatched split-KV GPU
+decode kernel. Their checked host boundaries relate
+input/output shapes, grid tiles, and Ref signatures; CPU interpretation
+checks representative results. These tests do not claim TPU or GPU hardware
+execution, compiler lowering, or proof of arbitrary index-map callbacks.
+The TPU matmul also cannot prove that its conditional accumulator
+initialization runs before every update. Decode attention checks an unbatched
+FP16/BF16 case with whole KV splits; optional sequence bounds, batched
+variants, and other branches remain outside the fixture. The narrow
+`jax.numpy.asarray` overlay exists to construct NumPy-backed CPU test inputs,
+not to infer their symbolic shapes automatically.
+
 `test_pipeline_matmul.py` checks the Hopper Mosaic GPU pipeline from JAX's
 GPU pipelining guide. The host signature ties FP16 `[M,K]` and `[K,N]` to
 `[M,N]`; runtime checks require matching devices, whole positive output/K
@@ -7,15 +29,15 @@ tiles and WGMMA-compatible tile/swizzle alignment. Kernel Refs distinguish
 GMEM inputs/output, SMEM pipeline tiles and an accumulator, with static
 checks of their matmul contraction axis and final store tile. Tests inspect
 the grid, output specification and scratch metadata with the GPU launcher
-mocked; no GPU execution or kernel lowering is claimed. The installed JAX
-uses `out_type`/`scratch_types` rather than the guide's obsolete
-`out_shape`/`scratch_shapes`, so those launch names and the local stub are
-updated without changing the nested kernel body. It also moved
-`delay_release` from `emit_pipeline` to `BlockSpec`; the upstream kernel body
-needs a separate API migration before it can run with this JAX release. When
-we revisit it, move `delay_release=1` to both input `BlockSpec` calls, remove
-it from `emit_pipeline`, then rerun frontend/GPU validation; this would be an
-intentional departure from the preserved upstream kernel body.
+mocked; no GPU execution or kernel lowering is claimed. The launch and local
+stub use JAX's `out_type` and `scratch_types` APIs. The fixture places
+`delay_release=1` on both input `BlockSpec`s, as required by the installed
+JAX API, and omits it from `emit_pipeline`. This placement preserves the
+pipeline's intended buffer lifetime. Focused tests check the captured
+pipeline arguments, but frontend/GPU lowering remains untested. The eager
+host adapter checks device identity and does not run under JAX
+tracing; a trace-compatible adapter would need to avoid inspecting tracer
+devices while retaining the same shape and dtype checks.
 As in the other layouts, static types do not prove the index-map lambdas
 agree with the intended grid tiling.
 
@@ -30,13 +52,17 @@ partial reduction blocks. The CPU adapter rejects partial output-column
 blocks because JAX's CPU interpreter cannot lower the `program_id` reached
 through the upstream conditional store-mask branch; this is an interpreter
 restriction, not a proof that the GPU kernel cannot handle those columns.
+With `JAX_DISABLE_JIT=1`, eager Ref indexing also rejects the masked final
+contraction slice before the load; the partial-K numerical test is skipped
+only in that mode. Normal CPU interpretation executes the test. Neither mode
+establishes safety on an actual GPU.
 The type system does
 not verify the values returned by the index-map lambdas, nor associate a
 specific RHS matrix with each runtime boundary. The CPU test substitutes
-`jnp.dot` for `pl.dot` in test scope: installed JAX 0.12 removed `pl.dot`
+`jnp.dot` for `pl.dot` in test scope: the installed JAX omits `pl.dot`
 from the upstream body. Production execution needs that upstream API
 migration; the substitution does not change the preserved kernel source.
-The local JAX stub overlay adds `shape` and `dtype` to its synthetic
+The local JAX stub overlay defines `shape` and `dtype` on its synthetic
 `RaggedCumulative` result so the checked boundary can verify the prefix.
 
 `test_rms_norm.py` checks JAX's original GPU RMSNorm row kernel with
@@ -50,12 +76,12 @@ three-output `row_statistics_layout` signature, a useful case for a general
 checked output-tuple mapping later. Neither type rule proves the numerical
 reduction nor the provenance of the returned statistic.
 
-`test_attention_backward.py` adds JAX's full two-scan attention-backward
+`test_attention_backward.py` contains JAX's full two-scan attention-backward
 kernel. Its checked layout relates Q/O/dO/dQ `[B,Q,H,D]`, K/V/dK/dV
 `[B,K,H,D]`, optional integer segment IDs `[B,K]`, and float32 LSE/Delta
 `[B,H,Q]` to a shared `(B,H,K/block_kv_dkv)` grid. Pallas can support
 different query and key lengths here; both scans must have the same number
-of output blocks. The shared layout builder now permits a genuinely absent
+of output blocks. The shared layout builder permits a genuinely absent
 input (`None`) without shifting subsequent `BlockSpec`s, and the checked
 call enforces presence, shapes, dtypes, and devices. CPU tests compare both
 noncausal and causal/segmented gradients against independent JAX derivatives.
@@ -83,7 +109,7 @@ gradient, using the empty grid and Pallas's full-row Refs. The CPU interpreter
 checks a partial final block against the independent layer-norm derivative.
 The wrapper validates input shapes and dtypes at launch; it does not prove
 that saved mean and reciprocal standard deviation were computed from this
-particular input. `test_layer_norm_weight_grad.py` adds the upstream
+particular input. `test_layer_norm_weight_grad.py` contains the upstream
 weight/bias-gradient kernel. Its checked layout ties two full `[Rows, Cols]`
 matrix Refs, two `[Cols]` vectors, two `[Rows]` saved statistics, and both
 `[Cols]` outputs to a grid of column tiles. The CPU test covers partial row
@@ -123,12 +149,11 @@ row with four-element blocks exercises all three masked passes through the
 unchanged kernel. There is no host stride restriction because Pallas Refs
 represent logical indices rather than Triton-style pointer addresses.
 
-For v2, test the statistic-output shape mismatch as well as input mismatch:
-the scalar JAX stubs now describe `Array[[]]` and `ShapeDtypeStruct[[]]`,
-but the current multi-output layouts have kernel-specific signatures. The
-row-statistics layout is deliberately specific to this kernel; generalizing
-checked layouts across heterogeneous output tuples and optional kernel outputs
-requires more than the existing arity overloads.
+The layout rejects a non-scalar statistic output shape in a focused runtime
+test; the scalar JAX stubs describe `Array[[]]` and
+`ShapeDtypeStruct[[]]`. The multi-output layouts still have kernel-specific
+signatures. Generalizing checked layouts across heterogeneous output tuples
+and optional kernel outputs requires more than the existing arity overloads.
 Neither the loop's grid coverage nor its per-lane mask implication is proved
 by these types. The Triton forward equivalent uses a row-per-program grid,
 while this Pallas row kernel has an empty grid and could be vmapped across
@@ -137,7 +162,7 @@ rows in a separate host adapter.
 `test_dropout.py` creates two Pallas analogues to Triton's dropout tutorial;
 these bodies are not copied from an upstream Pallas example. An explicit
 boolean keep-mask and the floating-point values have the same host length
-and block mapping but different dtypes. `vector_layout` now checks each input
+and block mapping but different dtypes. `vector_layout` checks each input
 dtype independently while preserving their shared shape. The seeded version
 uses a single input Ref; its closure captures checked probability and integer
 seed metadata, and folds the program ID into a JAX key before sampling a
@@ -156,7 +181,7 @@ stubs, so these layouts accept `jax.Array[Shape]` directly and validate the
 concrete shape at launch without an intermediate host-array marker.
 
 `test_vector_add.py` preserves the executable vector-add body from the v0
-Pallas fixture and adds a CPU test for an explicit checked boundary. Its
+Pallas fixture and tests an explicit checked boundary on CPU. Its
 `design_doc_add(x, y)` packages the inline `pallas_call` in JAX's
 `docs/pallas/design/design.md` into a named callable for comparison: the
 design doc does not define a named host wrapper. It keeps the fixed 8-element
@@ -181,9 +206,8 @@ Run from the v1 directory:
 
 ```sh
 ../.venv/bin/pyrefly check -c pyrefly.toml
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v pallas_examples.test_vector_add
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v pallas_examples.test_masked_softmax
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v pallas_examples.test_blocked_matmul
+../.venv/bin/python -m unittest discover -s pallas_examples -t . -p 'test_*.py'
+JAX_DISABLE_JIT=1 ../.venv/bin/python -m unittest discover -s pallas_examples -t . -p 'test_*.py'
 ```
 
 `test_masked_softmax.py` preserves the body of JAX's

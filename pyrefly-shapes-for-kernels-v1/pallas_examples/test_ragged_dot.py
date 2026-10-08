@@ -6,6 +6,7 @@ only its semantic parameter annotations are added.
 
 from __future__ import annotations
 
+import os
 import unittest
 from typing import TYPE_CHECKING, Any, assert_type, cast
 from unittest.mock import patch
@@ -186,6 +187,10 @@ class RaggedDotTest(unittest.TestCase):
             np.asarray(out), np.asarray(x) * np.array([1, 1, 2, 3, 3])[:, None]
         )
 
+    @unittest.skipIf(
+        os.environ.get("JAX_DISABLE_JIT") == "1",
+        "eager Ref slicing rejects the masked final contraction block",
+    )
     def test_partial_contraction(self) -> None:
         x = cast(Any, jnp.arange)(25, dtype=jnp.float32).reshape(5, 5)
         y = cast(Any, jnp).stack([cast(Any, jnp).eye(5)[:, :4] * i for i in (1, 2, 3)])

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 from typing import TYPE_CHECKING, Any, assert_type, cast
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import jax
 import jax.numpy as jnp
@@ -84,15 +84,20 @@ def pipelined_matmul[
             pipeline_step,
             in_specs=[
                 plgpu.BlockSpec(
-                    (tile_m, tile_k), lambda k: (pid_m, k), transforms=transforms
+                    (tile_m, tile_k),
+                    lambda k: (pid_m, k),
+                    transforms=transforms,
+                    delay_release=1,  # JAX 0.11 moved this from emit_pipeline.
                 ),
                 plgpu.BlockSpec(
-                    (tile_k, tile_n), lambda k: (k, pid_n), transforms=transforms
+                    (tile_k, tile_n),
+                    lambda k: (k, pid_n),
+                    transforms=transforms,
+                    delay_release=1,  # JAX 0.11 moved this from emit_pipeline.
                 ),
             ],
             grid=(grid_k,),
             max_concurrent_steps=2,
-            delay_release=1,  # pyrefly: ignore[unexpected-keyword]
         )
 
         pipeline(a_gmem, b_gmem)
@@ -120,6 +125,30 @@ def pipelined_matmul[
 
 class PipelineMatmulTest(unittest.TestCase):
     """Check the GPU boundary metadata without claiming CPU kernel execution."""
+
+    def test_pipeline_delay_release_specs(self) -> None:
+        a = cast(Any, jnp).ones((128, 128), dtype=jnp.float16)
+        b = cast(Any, jnp).ones((128, 64), dtype=jnp.float16)
+        with patch.object(
+            plgpu,
+            "kernel",
+            return_value=lambda lhs, rhs: jnp.zeros((128, 64), dtype=jnp.float16),
+        ) as mock_kernel:
+            pipelined_matmul(a, b, 64, 64, 128)
+        kernel = mock_kernel.call_args.args[0]
+        with (
+            patch.object(pl, "program_id", side_effect=(0, 0)),
+            patch.object(plgpu, "emit_pipeline", return_value=MagicMock()) as pipeline,
+            patch.object(plgpu, "commit_smem"),
+            patch.object(plgpu, "copy_smem_to_gmem"),
+            patch.object(plgpu, "wait_smem_to_gmem"),
+        ):
+            kernel(MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock())
+        self.assertEqual(
+            [spec.delay_release for spec in pipeline.call_args.kwargs["in_specs"]],
+            [1, 1],
+        )
+        self.assertNotIn("delay_release", pipeline.call_args.kwargs)
 
     def test_grid_output_and_scratch_metadata(self) -> None:
         a = cast(Any, jnp).ones((128, 128), dtype=jnp.float16)

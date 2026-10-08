@@ -3,8 +3,8 @@
 - Keep runtime library code separate from example kernel bodies. Triton and
   Pallas each have their own `*_library/` and `*_examples/` directories.
 - `triton_library/triton-stubs/` and `pallas_library/pallas-stubs/` are v1-owned
-  overlays derived from v0. Gluon stays in v0; change v1 stubs without
-  mutating v0.
+  independently owned overlays. Gluon/CuTe are deferred to the design notes
+  in `OTHER_KERNEL_DSLS.md`; do not add them to the v1 stubs.
 - Preserve upstream kernel statements by default. When a pointer changes
   semantic type, a mechanical rewrite to a fresh local name (and its later
   uses) is allowed instead of reassigning an annotated parameter. Comment

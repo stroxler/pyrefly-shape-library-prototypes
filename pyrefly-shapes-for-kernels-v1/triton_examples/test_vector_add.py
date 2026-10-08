@@ -231,6 +231,21 @@ class VectorAddTest(unittest.TestCase):
 
 
 if TYPE_CHECKING:
+
+    def check_scalar_program_shift[Length: IntVar](
+        input: tlt.InPointer[[Length], [1]],
+        output: tlt.OutPointer[[Length], [1]],
+        strided: tlt.InPointer[[Length], [2]],
+        strided_output: tlt.OutPointer[[Length], [2]],
+        matrix: tlt.InPointer[[Length, Length], [Length, 1]],
+        value: tl.tensor[[]],
+    ) -> None:
+        tl.load(input + tl.program_id(0))
+        tl.store(output + tl.program_id(0), value)
+        strided + tl.program_id(0)  # pyrefly: ignore[unsupported-operation]
+        strided_output + tl.program_id(0)  # pyrefly: ignore[unsupported-operation]
+        matrix + tl.program_id(0)  # pyrefly: ignore[unsupported-operation]
+
     def check_launch_axis_mask[Length: IntVar, Width: IntVar](
         pointer: tlt.InPointer[[Length], [1]],
         output: tlt.OutPointer[[Length], [1]],

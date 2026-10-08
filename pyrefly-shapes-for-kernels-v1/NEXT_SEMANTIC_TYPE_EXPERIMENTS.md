@@ -9,39 +9,32 @@ for this prototype or a later iteration; it is not an implemented experiment.
 
 ## 1. Require row selection before column access in Triton (v1, partial)
 
-Softmax uses `row_ptr = input_ptr + row * row_stride`, then
-`row_ptr + column_offsets`. Layer norm instead uses `X += row * stride`.
-Pyrefly retains a subtype returned by `__iadd__` when it is assignable to
-the annotated pointer. `tlt.pyi` therefore returns `SelectedInRow` or
-`SelectedOutRow`, each a subtype of the original rank-two pointer, from a
-row-stride shift. Column offsets apply to a lower-rank pointer or to a
-selected-row subtype, but no longer to an unselected rank-two pointer.
-The unchanged softmax, layer norm, and strided-copy bodies type-check. A
-type-only layer-norm fixture checks both selected-pointer types and expects
-`unsupported-operation` when a matrix pointer accesses columns before row
-selection.
+Softmax selects a row with `row_ptr = input_ptr + row * row_stride`, then
+forms `row_ptr + column_offsets`. Layer norm uses fresh row-pointer locals
+instead of reassigning its annotated matrix pointers with `+=`; comments
+beside those locals document the mechanical difference from upstream. A
+shift by the declared row stride returns an ordinary lower-rank pointer.
+Column offsets apply to that pointer, not to an unselected rank-two
+allocation pointer. A type-only layer-norm fixture rejects a matrix
+pointer's column access before row selection.
 
-The operator rule checks that **at least one** shift uses the declared row
-stride. Repeating the shift preserves the selected-row subtype and may move
-the pointer out of bounds. It does not prove that the program ID chooses the
-correct row, that all rows are visited, or that the row index is in bounds.
-The selected-row subtype is a static state of the original rank-two pointer,
-not a runtime object.
-An explicitly described flattening pattern is still needed for kernels
-that intentionally access a matrix without selecting a logical row.
+This rule recognizes the declared row stride, not the validity of `row`.
+It does not prove that the program ID chooses the correct row, that every
+row is visited, or that another row selection from the same allocation is
+safe. A described flattening pattern is still needed for kernels that
+intentionally address a matrix without selecting a logical row.
 
 ## 2. Track the grid axis in Triton masks and addresses (1D v1)
 
 `Offsets` and `Mask` carry the allocation shape, tile width, and a coarse
-origin such as `"local"` or `"program"`. They now also carry a separate grid-axis
+origin such as `"local"` or `"program"`. They also carry a separate grid-axis
 parameter through 1D program-id-scaled offsets, masks, and pointer arrays.
 `tl.load` and `tl.store` require that parameter to match. A type-only
-vector-add fixture shows that the preexisting origin category alone accepted
-offsets from `program_id(0)` with a mask from `program_id(1)`; after adding
-the axis parameter, those mismatches produce `no-matching-overload` for both
+vector-add fixture shows that offsets from `program_id(0)` paired with a mask
+from `program_id(1)` produce `no-matching-overload` for both
 load and store. The checker also rejects a union of axes 0 and 1 on either
 the pointer or the mask side. The unchanged executable vector-add body
-type-checks. A discovered unittest runs Pyrefly with `--error unused-ignore`
+type-checks. A unittest runs Pyrefly with `--error unused-ignore`
 so a negative probe failing to produce its expected diagnostic fails the
 test suite.
 
@@ -51,7 +44,7 @@ match each other without proving either uses a particular grid axis; the
 `program_id(axis: int)` fallback and adding an arbitrary scalar to offsets
 are such unknown paths. The existing `"axis_0"` *origin*
 marker describes a matrix address orientation, not grid axis zero. The
-1D axis-tag result is not a complete multi-axis kernel analysis: row/column
+1D axis tag is not a complete multi-axis kernel analysis: row/column
 offsets and `MatrixMask` still discard grid-axis provenance. Extending it
 to real multi-axis kernels needs a separate typed combination rule for the
 origins of different tensor axes.
@@ -60,9 +53,8 @@ Matching axes is only a necessary consistency check. Two different offset
 expressions using the same axis can still be incompatible, and a matching
 mask type does not prove that the predicate guards every accessed address.
 Expression-level provenance, bounds implications, and validity of data after
-a masked load would require a substantially richer analysis. Stop after the
-axis-tag experiment if the stub changes proliferate without catching useful
-mutants in existing examples.
+a masked load would require a substantially richer analysis. Further axis
+rules should earn their complexity by rejecting useful negative examples.
 
 ## 3. Compose Pallas layouts from axis and block relationships
 

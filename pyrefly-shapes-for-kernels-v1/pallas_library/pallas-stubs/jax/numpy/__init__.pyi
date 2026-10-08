@@ -7,6 +7,7 @@
 
 from typing import Literal, overload
 
+import numpy as np
 from jax import Array, RaggedCumulative
 from jax.experimental.pallas import (
     AccumRef,
@@ -46,6 +47,7 @@ def empty[Length: IntVar](
     shape: tuple[Int[Length]], *, dtype: object
 ) -> Array[[Length]]: ...
 def dtype(value: Float16Dtype) -> Float16Dtype: ...
+def asarray(value: np.ndarray) -> Array: ...
 def ones[Rows: IntVar, Cols: IntVar](
     shape: tuple[Int[Rows], Int[Cols]], *, dtype: object
 ) -> Array[[Rows, Cols]]: ...

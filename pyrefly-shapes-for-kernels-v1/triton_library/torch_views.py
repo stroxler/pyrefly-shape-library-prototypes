@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from math import gcd
 from typing import cast, get_args, get_origin, overload
 
 import torch
@@ -32,7 +33,10 @@ def checked_attention_stats[Batch: IntVar, Heads: IntVar, Tokens: IntVar](
 
 
 def checked_attention_backward_input[
-    Batch: IntVar, Heads: IntVar, Tokens: IntVar, Dim: IntVar
+    Batch: IntVar,
+    Heads: IntVar,
+    Tokens: IntVar,
+    Dim: IntVar,
 ](
     tensor: torch.Tensor[[Batch, Heads, Tokens, Dim]],
     shape: tuple[Int[Batch], Int[Heads], Int[Tokens], Int[Dim]],
@@ -56,7 +60,10 @@ def checked_attention_backward_delta[Batch: IntVar, Heads: IntVar, Tokens: IntVa
 
 
 def checked_attention_backward_output[
-    Batch: IntVar, Heads: IntVar, Tokens: IntVar, Dim: IntVar
+    Batch: IntVar,
+    Heads: IntVar,
+    Tokens: IntVar,
+    Dim: IntVar,
 ](
     tensor: torch.Tensor[[Batch, Heads, Tokens, Dim]],
     shape: tuple[Int[Batch], Int[Heads], Int[Tokens], Int[Dim]],
@@ -210,6 +217,31 @@ def checked_group_locks[Groups: IntVar](
     return cast("tl.LockArrayPointer[Groups, int]", tensor)
 
 
+def validate_output_nonoverlap(tensor: torch.Tensor) -> None:
+    """Reject overlapping output views without assuming row-major strides."""
+    axes = [
+        (size, stride)
+        for size, stride in zip(tensor.shape, tensor.stride())
+        if size > 1
+    ]
+    if not axes or tensor.numel() == 0:
+        return
+    if any(stride == 0 for _, stride in axes):
+        raise ValueError("Output elements must not overlap")
+    if len(axes) == 2:
+        (rows, row_stride), (cols, col_stride) = axes
+        common = gcd(row_stride, col_stride)
+        if rows > col_stride // common and cols > row_stride // common:
+            raise ValueError("Output elements must not overlap")
+    else:
+        # For higher ranks, require disjoint spans along increasing strides.
+        extent = 0
+        for size, stride in sorted(axes, key=lambda axis: axis[1]):
+            if stride <= extent:
+                raise ValueError("Output elements must not overlap")
+            extent += (size - 1) * stride
+
+
 def _validate_view(
     tensor: torch.Tensor, view_type: object, kinds: tuple[type, ...]
 ) -> None:
@@ -227,7 +259,5 @@ def _validate_view(
     for actual, expected in zip(tensor.stride(), strides, strict=True):
         if isinstance(expected, int) and actual != expected:
             raise ValueError(f"Expected element stride {expected}, got {actual}")
-    if kind is tlt.OutPointer and tensor.ndim == 2:
-        rows, cols = tensor.shape
-        if rows > 1 and tensor.stride(0) < cols:
-            raise ValueError("Output rows must not overlap")
+    if kind in (tlt.OutPointer, tlt.InOutPointer):
+        validate_output_nonoverlap(tensor)

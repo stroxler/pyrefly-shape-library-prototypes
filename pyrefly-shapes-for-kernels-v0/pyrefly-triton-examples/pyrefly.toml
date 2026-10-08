@@ -1,4 +1,0 @@
-search_path = [
-    ".",
-]
-python-interpreter-path = "../../.venv/bin/python"

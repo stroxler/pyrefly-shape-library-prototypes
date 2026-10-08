@@ -11,8 +11,13 @@ full hardware execution or proof of every host wrapper. The multi-CTA
 tutorial 15 is intentionally excluded: its distributed loops require a
 `tl.range(multi_cta=True)` frontend feature absent from PyPI Triton 3.8.0.
 There are no top-level numbered tutorials 13 or 14 in this checkout.
-Unnumbered warp-specialized attention files and the separate CPU/Gluon
-tutorial trees are outside this inventory.
+Unnumbered warp-specialized attention files and most of the separate CPU
+tutorial tree are outside this inventory; Gluon is a separate DSL. The
+additional `test_cpu_vector_add_tiled.py` preserves the CPU tutorial's
+multiple-tiles-per-program loop, checks the launch shape and tile metadata,
+and includes a negative fixture in which the original Y load rejects a
+pointer tagged with another allocation length. Its CPU interpreter test
+checks the partial last tile.
 
 `test_block_scaled_matmul.py` retains tutorial 10's Blackwell descriptor and
 CDNA4 packed-pointer kernels. Its host validators check packed shapes,
@@ -341,10 +346,12 @@ adding `program_id * BLOCK_SIZE` marks a program-shifted tile. The tag survives
 stride multiplication, so both `tl.load` and `tl.store` reject a mask derived
 from unshifted offsets paired with program-shifted addresses. This is a
 targeted consistency check, not full mask algebra: distinct expressions with
-the same origin tag can still produce incompatible addresses and masks (for
-example, using different `program_id` axes), and `tensor` does not retain the
-mask after loading. Full validity propagation would need expression-sensitive
-index provenance and rules for how tensor operations and store masks combine.
+the same origin and grid-axis tags can still produce incompatible addresses
+and masks, and `tensor` does not retain the mask after loading. Known,
+different `program_id` axes are rejected by the 1D rules described above;
+the 2D address rules and unknown-axis fallbacks do not prove such alignment.
+Full validity propagation would need expression-sensitive index provenance
+and rules for how tensor operations and store masks combine.
 
 `test_matrix_multiplication.py` preserves Triton's tutorial 03 grouped
 matmul body with annotations for full allocation shape, both element strides

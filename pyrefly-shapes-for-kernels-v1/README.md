@@ -1,10 +1,20 @@
 # Kernel shape experiments (v1)
 
+The [v1 assessment](V1_ASSESSMENT.md) summarizes the corpus, the checks
+that bind a Python-facing shape contract to a kernel, and the remaining
+trust boundaries. This is an experimental type system and checked-boundary
+library, not a proof of GPU execution safety or a change to Pyrefly core.
+The [boundary and corpus guide](BOUNDARY_AND_CORPUS.md) suggests an order for
+reading the examples and records remaining example families. The
+[Gluon/CuTe notes](OTHER_KERNEL_DSLS.md) capture insights from those
+explorations without expanding the v1 implementation to either DSL.
+
 The [Triton library](triton_library/README.md) and
 [Triton examples](triton_examples/README.md) are separate from the
 [Pallas library](pallas_library/README.md) and
 [Pallas examples](pallas_examples/README.md). The v1 overlays were derived
-from v0 but are independently owned; Gluon stubs remain only in v0. The
+from an earlier exploratory overlay but are independently owned; Gluon has no
+v1 stubs. The
 executable Triton experiments use `@semantic_jit` around kernel entrypoints,
 starting with the vector-add body from
 `python/tutorials/01-vector-add.py`. The kernel body is unchanged; the local
@@ -13,7 +23,7 @@ symbolic `N` and `Block` with legacy-style generics; the kernel uses the same
 `tlt.InPointer[[N], [1]]` and `Int[N]` annotations. Triton's source extractor
 currently only recognizes `def name(`, so PEP 695 function type parameters
 are not suitable for this first runtime probe. This experiment makes no changes
-to Pyrefly core or v0. The independent Pallas fixture runs its original
+to Pyrefly core. The independent Pallas fixture runs its original
 vector-add kernel through an explicit checked JAX boundary, using semantic
 annotations directly without source rewriting.
 
@@ -38,9 +48,9 @@ The [Triton example](triton_examples/README.md) and
 [Pallas example](pallas_examples/README.md) record the small adaptations needed
 to run these calls against our annotated kernels and current libraries.
 
-The next fixtures add [Triton fused softmax](triton_examples/test_fused_softmax.py)
-and [Pallas masked softmax](pallas_examples/test_masked_softmax.py). They keep
-their handwritten host logic. Triton explicitly models 2D allocation shape and element
+The [Triton fused softmax](triton_examples/test_fused_softmax.py)
+and [Pallas masked softmax](pallas_examples/test_masked_softmax.py) fixtures
+retain their handwritten host logic. Triton explicitly models 2D allocation shape and element
 strides with independent input/output row strides, a grid-stride row loop, and
 a column tile.
 Pallas types a one-row kernel and uses an explicit `vmap` to lift it to a 2D
@@ -61,9 +71,9 @@ stride across kernel arguments.
 A pre-run hook validates the missing equalities against actual tensors and
 scalars before executing the kernel.
 
-The next [Triton grouped matmul](triton_examples/test_matrix_multiplication.py)
+The [Triton grouped matmul](triton_examples/test_matrix_multiplication.py)
 and [Pallas blocked matmul](pallas_examples/test_blocked_matmul.py) fixtures
-stress 2D tiling. Triton now uses rank-independent allocation pointers and
+stress 2D tiling. Triton uses rank-independent allocation pointers and
 indexed-tile pointer types, but the operations that build 2D addresses and
 masks retain specialized v0 stub types. Pallas accepts independently mapped
 2D Refs and contextually types their index-map lambdas, but it cannot prove
@@ -93,14 +103,14 @@ Run these probes from this directory:
 
 ```sh
 ../.venv/bin/pyrefly check -c pyrefly.toml
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest discover -s triton_examples -p 'test_*.py'
-TRITON_INTERPRET=1 /home/stroxler/.kernel-shapes-venv/bin/python -m unittest discover -s triton_examples -p 'test_*.py'
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest discover -s pallas_examples -p 'test_*.py'
+../.venv/bin/python -m unittest discover -s triton_examples -t . -p 'test_*.py'
+TRITON_INTERPRET=1 ../.venv/bin/python -m unittest discover -s triton_examples -t . -p 'test_*.py'
+../.venv/bin/python -m unittest discover -s pallas_examples -t . -p 'test_*.py'
 ```
 
-Pyrefly currently reports zero diagnostics with 15 intentionally suppressed
-diagnostics across the examples; this does not imply that every kernel operation
-has a semantic shape rule. A normal JIT captures the
+Zero Pyrefly errors do not imply that every kernel operation has a semantic
+shape rule: individual fixtures document narrow diagnostic suppressions
+and properties that remain unchecked. A normal JIT captures the
 intended parameter annotations and computes its dependency hash over the
 translated source. Frontend compilation with a virtual CUDA SM80 target produces
 TTIR without an attached GPU; `triton_examples.testing.compile_ttir` returns
@@ -117,23 +127,26 @@ rank, unit element strides, shared length and device, block size, and output
 dtype. `checked_vector` presents each unchanged Torch array as a typed
 `InPointer` or `OutPointer` and derives `n_elements`; the handwritten launch
 passes it to the kernel. The output is allocated with the selected dtype.
-The checks also run when the kernel is launched directly, through the
-evaluated semantic annotations and pre-run hook. CPU tests include empty,
-partial, and full tiles; mixed input dtypes; and the upstream block size.
+Direct launches recheck only annotated pointer ranks, shapes, and strides,
+plus shared symbolic integers, through the pre-run hook. Device agreement,
+output dtype, block-size restrictions, and grid size rely on the checked
+adapter and layout. CPU tests include empty, partial, and full tiles; mixed
+input dtypes; and the upstream block size.
 
 Pallas `checked_add(x, y, block_size=4)`
 constructs a `vector_layout` with a typed grid axis, block, and index-map
 lambda. `checked_pallas_call` builds a callable that checks runtime input
-shape, dtype, and device against that layout before launching. The 2D matmul
-fixture builds a different typed layout and uses the same checked call. Pallas itself
+shape and dtype against that layout, and requires concrete input devices
+to agree when available. The 2D matmul fixture builds a different typed
+layout and uses the same checked call. Pallas itself
 allocates the output and supplies its Ref to the kernel. Empty inputs return
 an empty output without launching a zero-sized grid. The upstream inline
 `pallas_call` remains alongside this example for comparison.
 
 Contextual typing rejects simple index-map mistakes in the Pallas layouts,
 but neither checked boundary proves that arbitrary index-map arithmetic or
-grid traversal aligns with the operations inside the kernel. Mapping whole host shapes to Ref tile
-shapes to Ref tile shapes for arbitrary kernels would require a more general
+grid traversal aligns with the operations inside the kernel. Mapping whole
+host shapes to Ref tile shapes for arbitrary kernels would require a more general
 parameter-list mapping operator or a Pyrefly hook; neither is part of v1.
 
 ## Review findings and v2 questions
@@ -144,20 +157,22 @@ output layouts check grid sizes and named launch arguments; they do not prove
 program-ID arithmetic. Pallas's typed index maps reject simple axis mistakes,
 but its pattern-specific layout factories construct `BlockSpec`s behind a
 generic `Layout` that stores them as `object`, and `checked_pallas_call` trusts
-the constructed layout when it casts the underlying call's result. Both
-languages still need explicit negative tests for wrong indexing and masks.
-For example, Triton's two-dimensional pointer overload allows adding column
-offsets to produce a row tile without first checking that a row was selected.
-Simply removing that overload would also reject layer norm: Pyrefly keeps
-its matrix pointer type after the kernel's in-place row shift (`+=`). A stricter
-row-selection rule needs either a way to refine that type or explicit evidence
-from the kernel body. The existing mask checks similarly match allocation,
-tile width, and a coarse offset-origin category, not the exact address or
-program-ID axis that produced a predicate.
+the constructed layout when it casts the underlying call's result. Existing
+negative tests cover some wrong indexing and masks; more varied cases are
+needed to characterize the boundaries of those rules.
+For example, Triton's two-dimensional pointers require a stride-matched
+row-selection operation before adding column offsets; adapted kernels use
+fresh lower-rank pointer locals where upstream reassigned a parameter with
+`+=`. This does not establish that the row index is in bounds or that each
+row is visited. The 1D mask checks match allocation length, tile width,
+offset-origin category, and known grid axis. They do not prove that a
+predicate guards the exact address in each lane; the 2D rules do not retain
+the same grid-axis information.
 
-Triton's direct-launch validator resolves the runtime-checkable semantic
-annotations even when they are postponed strings, ignores unannotated
-parameters, and checks symbolic integers nested inside `ConstExpr[...]`.
+Triton's direct-launch validator resolves runtime-checkable semantic
+annotations even when they are postponed strings or direct marker imports,
+ignores unannotated parameters, and checks symbolic integers nested inside
+`ConstExpr[...]`.
 `triton_examples/test_semantic_jit.py` exercises these cases in both JIT and
 interpreter modes. This is not a general annotation evaluator: stub-only
 annotations such as attention's `tl.AttentionPointer` cannot register this

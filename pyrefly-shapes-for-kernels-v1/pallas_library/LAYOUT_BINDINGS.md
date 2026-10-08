@@ -1,6 +1,8 @@
 # Current Pallas layouts as bindings
 
-These are the actual bindings assembled by the typed factories in `layout.py`.
+These are representative bindings assembled by the typed factories in
+`layout.py`; other examples have additional patterns and their own typed
+factories.
 Notation: `I(axes; block; map)` and `O(axes; block; map)` are input and
 output bindings; `G(output, axis, block)` is one program-grid axis. Every
 binding also carries its host shape and dtype; repeated axis names require

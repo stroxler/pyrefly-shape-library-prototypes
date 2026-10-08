@@ -99,6 +99,14 @@ class CompilerParams:
     def __init__(
         self, *, dimension_semantics: tuple[Literal["parallel", "arbitrary"]]
     ) -> None: ...
+    @overload
+    def __init__(
+        self,
+        *,
+        dimension_semantics: tuple[
+            Literal["parallel"], Literal["parallel"], Literal["arbitrary"]
+        ],
+    ) -> None: ...
 
 class DmaSemaphore: ...
 class RegularSemaphore: ...
