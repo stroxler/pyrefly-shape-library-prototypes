@@ -1,50 +1,60 @@
-# Three possible semantic-type experiments
+# Semantic-type experiment status and remaining directions
 
-These sketches concern how a kernel uses its declared inputs. They are
+These checks concern how a kernel uses its declared inputs. They are
 separate from the checked Python shape/layout boundary, which is useful even
-when tiling, address selection, or per-lane validity remains unproved. No
-proposal below has been implemented or shown to work across the corpus.
+when tiling, address selection, or per-lane validity remains unproved.
 The [matmul addressing design](TRITON_ADDRESSING_DESIGN.md) works through
 program-ID decoding and reduction-pointer updates as a possible type system
 for this prototype or a later iteration; it is not an implemented experiment.
 
-## 1. Require row selection before column access in Triton
+## 1. Require row selection before column access in Triton (v1, partial)
 
-The current `InPointer[[Rows, Cols], [RowStride, 1]] + column_offsets`
-overload returns a tile of `Cols` even if no row was selected. Softmax already
-uses the more informative sequence `row_ptr = input_ptr + row * row_stride`,
-then `row_ptr + column_offsets`. Layer norm instead uses `X += row * stride`;
-Pyrefly keeps the annotated matrix-pointer type of `X` after the augmented
-assignment. Deleting the direct matrix-plus-columns overload would therefore
-reject an unchanged, valid kernel as well as the missing-row mistake.
+Softmax uses `row_ptr = input_ptr + row * row_stride`, then
+`row_ptr + column_offsets`. Layer norm instead uses `X += row * stride`.
+Pyrefly retains a subtype returned by `__iadd__` when it is assignable to
+the annotated pointer. `tlt.pyi` therefore returns `SelectedInRow` or
+`SelectedOutRow`, each a subtype of the original rank-two pointer, from a
+row-stride shift. Column offsets apply to a lower-rank pointer or to a
+selected-row subtype, but no longer to an unselected rank-two pointer.
+The unchanged softmax, layer norm, and strided-copy bodies type-check. A
+type-only layer-norm fixture checks both selected-pointer types and expects
+`unsupported-operation` when a matrix pointer accesses columns before row
+selection.
 
-The target rule is: selecting a row with its declared stride yields a pointer
-to the remaining column axis, and only that pointer accepts column offsets.
-First, make a small type-only probe of an in-place row shift whose `__iadd__`
-result has the lower-rank pointer type. If Pyrefly cannot retain that type
-after `+=`, investigate flow-sensitive augmented-assignment typing in Pyrefly
-or an explicit, out-of-band row-selection witness. Test against *both*
-unchanged softmax and layer norm, plus a mutant that omits the row shift.
+The operator rule checks that **at least one** shift uses the declared row
+stride. Repeating the shift preserves the selected-row subtype and may move
+the pointer out of bounds. It does not prove that the program ID chooses the
+correct row, that all rows are visited, or that the row index is in bounds.
+The selected-row subtype is a static state of the original rank-two pointer,
+not a runtime object.
+An explicitly described flattening pattern is still needed for kernels
+that intentionally access a matrix without selecting a logical row.
 
-This rule would establish that the stride and selected axis line up; it would
-not prove that a program ID chooses the correct row, that all rows are visited,
-or that the row index is in bounds. Some kernels intentionally flatten a 2D
-allocation, so any strict rule needs an explicit way to describe that access
-pattern rather than treating all matrix-plus-offset code as an error.
+## 2. Track the grid axis in Triton masks and addresses (1D v1)
 
-## 2. Track the grid axis in Triton masks and addresses
+`Offsets` and `Mask` carry the allocation shape, tile width, and a coarse
+origin such as `"local"` or `"program"`. They now also carry a separate grid-axis
+parameter through 1D program-id-scaled offsets, masks, and pointer arrays.
+`tl.load` and `tl.store` require that parameter to match. A type-only
+vector-add fixture shows that the preexisting origin category alone accepted
+offsets from `program_id(0)` with a mask from `program_id(1)`; after adding
+the axis parameter, those mismatches produce `no-matching-overload` for both
+load and store. The checker also rejects a union of axes 0 and 1 on either
+the pointer or the mask side. The unchanged executable vector-add body
+type-checks. A discovered unittest runs Pyrefly with `--error unused-ignore`
+so a negative probe failing to produce its expected diagnostic fails the
+test suite.
 
-`Offsets` and `Mask` currently carry the allocation shape, tile width, and a
-coarse origin such as `"local"` or `"program"`. Two offsets produced from
-different `tl.program_id` axes can consequently appear equivalent.
-
-A narrow prototype could make `program_id(axis=0)` return a
-`ProgramId[Literal[0]]` and carry that axis through `TileStart`, `Offsets`,
-pointer arrays, and masks. Then `tl.load`/`tl.store` would require a mask and
-pointer array with the same grid-axis tag. Test ordinary vector add and
-multi-axis kernels, plus a mutant that constructs its pointer array from one
-axis and its mask from another. Arithmetic that loses a recognizable origin
-should widen conservatively instead of manufacturing an axis guarantee.
+An unrecognized scalar index or arithmetic path drops provenance rather
+than manufacturing an axis guarantee. Unknown-axis offsets and masks can
+match each other without proving either uses a particular grid axis; the
+`program_id(axis: int)` fallback and adding an arbitrary scalar to offsets
+are such unknown paths. The existing `"axis_0"` *origin*
+marker describes a matrix address orientation, not grid axis zero. The
+1D axis-tag result is not a complete multi-axis kernel analysis: row/column
+offsets and `MatrixMask` still discard grid-axis provenance. Extending it
+to real multi-axis kernels needs a separate typed combination rule for the
+origins of different tensor axes.
 
 Matching axes is only a necessary consistency check. Two different offset
 expressions using the same axis can still be incompatible, and a matching

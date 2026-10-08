@@ -17,6 +17,14 @@ specs. `row_statistics_layout` supports multiple outputs, and
 `attention_layout` binds query, key/value, and statistics axes. Each factory
 produces a `Layout` with a typed host input/output signature.
 
+The factories use `InputBinding` and `OutputBinding` to assemble their runtime
+metadata. Each binding names the axes of a host array and, where needed,
+states its Pallas block shape and index map. `GridBinding` identifies an
+output axis and its per-program block width. Shared axis names must have
+equal host extents even when their arrays have different ranks; `None` in a
+block shape removes that host axis from the kernel Ref. See
+[concrete layouts](LAYOUT_BINDINGS.md) for every current example.
+
 `checked_pallas_call(layout, interpret=...)` uses one parameter-list-generic
 implementation for these patterns: it invokes `pallas_call` and validates
 the input arrays' concrete shape, individually declared input dtypes, and shared device when
@@ -29,8 +37,11 @@ replacing a required grid index with zero or with an unrelated axis, but do
 not prove arbitrary arithmetic, mask correctness, or complete output coverage.
 Pallas supplies ordinary index values at runtime; `BlockIndex` is only a
 static refinement, and the constructor explicitly bridges that difference.
-The pattern-specific layout constructors still require typed signatures and
-runtime checks, so this is not yet an arbitrary-kernel layout API.
+`binding_layout` is an executable, runtime-checked metadata assembler, but
+does **not** statically relate an arbitrary kernel's parameter tuple to its
+input and output Refs. Keep the pattern-specific constructors for that static
+check. Neither path proves index-map arithmetic, complete output coverage, or
+that a kernel respects a given Ref's declared shape internally.
 
 The copied JAX/Pallas stub overlay still includes semantic roles and overloads
 for other v0 tutorials. These examples use its shared `InRef`, `OutRef`, tile,

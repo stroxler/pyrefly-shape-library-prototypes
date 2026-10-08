@@ -39,6 +39,123 @@ class Layout[**HostArgs, Result]:
     input_dtypes: tuple[object, ...]
 
 
+@dataclass(frozen=True)
+class InputBinding:
+    """Map a host array's named axes to the Ref visible inside a kernel."""
+
+    host: jax.ShapeDtypeStruct
+    axes: tuple[str, ...]
+    block: tuple[int | None, ...] | None = None
+    index_map: Callable[..., tuple[int, ...]] | None = None
+
+
+@dataclass(frozen=True)
+class OutputBinding:
+    """Map a kernel output Ref back to a host array's named axes."""
+
+    host: jax.ShapeDtypeStruct
+    axes: tuple[str, ...]
+    block: tuple[int | None, ...] | None = None
+    index_map: Callable[..., tuple[int, ...]] | None = None
+
+
+@dataclass(frozen=True)
+class GridBinding:
+    """Tile an output's named host axis along one program-grid axis."""
+
+    output: int
+    axis: int
+    block: int
+    exact: bool = False
+
+
+def binding_layout(
+    kernel: Callable[..., None],
+    *,
+    inputs: tuple[InputBinding, ...],
+    outputs: tuple[OutputBinding, ...],
+    grid: tuple[GridBinding, ...] = (),
+    divisible: tuple[tuple[str, int], ...] = (),
+) -> Layout:
+    """Assemble and validate runtime metadata for a Pallas kernel.
+
+    The typed layout factories validate the kernel's Ref signature; this
+    general assembler cannot yet map an arbitrary parameter tuple to Refs.
+    """
+    if not outputs or len(inspect.signature(kernel).parameters) != len(inputs) + len(
+        outputs
+    ):
+        raise ValueError("Bindings must match the kernel parameter count")
+    dimensions: dict[str, int] = {}
+    bindings = (*inputs, *outputs)
+    for binding in bindings:
+        shape = tuple(binding.host.shape)
+        if len(shape) != len(binding.axes) or len(set(binding.axes)) != len(
+            binding.axes
+        ):
+            raise ValueError("Every host axis must have a distinct name")
+        for axis, extent in zip(binding.axes, shape, strict=True):
+            if type(extent) is not int or extent < 0:
+                raise ValueError("Host dimensions must be nonnegative integers")
+            if axis in dimensions and dimensions[axis] != extent:
+                raise ValueError(f"Host dimension {axis!r} does not match")
+            dimensions[axis] = extent
+        if (binding.block is None) != (binding.index_map is None):
+            raise ValueError("A block shape and index map must be supplied together")
+        if binding.block is not None:
+            if len(binding.block) != len(shape) or any(
+                value is not None and (type(value) is not int or value <= 0)
+                for value in binding.block
+            ):
+                raise ValueError("Block shape must match the host rank")
+            if any(
+                extent == 0 and block is None
+                for extent, block in zip(shape, binding.block, strict=True)
+            ):
+                raise ValueError("Squeezed block dimensions must be nonempty")
+    if any(binding.block is None for binding in bindings) and any(
+        binding.block is not None for binding in bindings
+    ):
+        raise ValueError("All bindings must either have block specs or omit them")
+    for axis, block in divisible:
+        if axis not in dimensions or type(block) is not int or block <= 0:
+            raise ValueError(
+                "Divisibility constraint needs a known axis and positive block"
+            )
+        if dimensions[axis] % block:
+            raise ValueError(f"Host dimension {axis!r} must be divisible by {block}")
+    grid_sizes = []
+    for entry in grid:
+        if type(entry.output) is not int or not 0 <= entry.output < len(outputs):
+            raise ValueError("Grid output index is invalid")
+        shape = outputs[entry.output].host.shape
+        if type(entry.axis) is not int or not 0 <= entry.axis < len(shape):
+            raise ValueError("Grid output axis is invalid")
+        if type(entry.block) is not int or entry.block <= 0:
+            raise ValueError("Grid block must be positive")
+        extent = shape[entry.axis]
+        if entry.exact and extent % entry.block:
+            raise ValueError("Grid block must divide the output dimension")
+        grid_sizes.append((extent + entry.block - 1) // entry.block)
+    specs = tuple(
+        cast(Any, pl.BlockSpec)(binding.block, binding.index_map)
+        for binding in bindings
+        if binding.block is not None
+    )
+    out_shapes = tuple(binding.host for binding in outputs)
+    return Layout(
+        kernel=kernel,
+        grid=tuple(grid_sizes),
+        in_specs=specs[: len(inputs)] if specs else None,
+        out_spec=(specs[-1] if len(outputs) == 1 else specs[-len(outputs) :])
+        if specs
+        else None,
+        out_shape=out_shapes[0] if len(outputs) == 1 else out_shapes,
+        input_shapes=tuple(tuple(binding.host.shape) for binding in inputs),
+        input_dtypes=tuple(binding.host.dtype for binding in inputs),
+    )
+
+
 def row_layout[Cols: IntVar](
     kernel: Callable[[pl.InRef[[Cols]], pl.OutRef[[Cols]]], None],
     *,
@@ -49,7 +166,14 @@ def row_layout[Cols: IntVar](
     shape = tuple(out_shape.shape)
     if grid != () or len(shape) != 1 or type(shape[0]) is not int or shape[0] <= 0:
         raise ValueError("Expected a nonempty one-dimensional row and empty grid")
-    return Layout(kernel, grid, None, None, out_shape, (shape,), (out_shape.dtype,))
+    return cast(
+        Any,
+        binding_layout(
+            kernel,
+            inputs=(InputBinding(out_shape, ("cols",)),),
+            outputs=(OutputBinding(out_shape, ("cols",)),),
+        ),
+    )
 
 
 def row_statistics_layout[Features: IntVar](
@@ -86,8 +210,17 @@ def row_statistics_layout[Features: IntVar](
         or any(spec.dtype != output.dtype for spec in (mean, rstd))
     ):
         raise ValueError("Statistics outputs must be scalars of the row dtype")
-    return Layout(
-        kernel, grid, None, None, out_shape, (shape,) * 3, (output.dtype,) * 3
+    return cast(
+        Any,
+        binding_layout(
+            kernel,
+            inputs=(InputBinding(output, ("features",)),) * 3,
+            outputs=(
+                OutputBinding(output, ("features",)),
+                OutputBinding(mean, ()),
+                OutputBinding(rstd, ()),
+            ),
+        ),
     )
 
 
@@ -156,19 +289,33 @@ def attention_layout[
         raise ValueError("Output and statistics shapes must match the attention axes")
     if out_shape[1].dtype != jnp.float32:
         raise ValueError("Attention statistics require float32 output")
-    query_spec = pl.BlockSpec(
-        (None, query_block, None, dim), lambda i, j, h: (j, i, h, 0)
-    )
-    kv_spec = pl.BlockSpec((None, keys, None, dim), lambda _, j, h: (j, 0, h, 0))
-    lse_spec = pl.BlockSpec((None, None, query_block), lambda i, j, h: (j, h, i))
-    return Layout(
-        kernel,
-        grid,
-        (query_spec, kv_spec, kv_spec),
-        (query_spec, lse_spec),
-        out_shape,
-        (query_shape, key_shape, key_shape),
-        (out_shape[0].dtype,) * 3,
+    query_map = lambda i, j, h: (j, i, h, 0)
+    kv_map = lambda _i, j, h: (j, 0, h, 0)
+    lse_map = lambda i, j, h: (j, h, i)
+    q_host = jax.ShapeDtypeStruct(query_shape, out_shape[0].dtype)
+    kv_host = jax.ShapeDtypeStruct(key_shape, out_shape[0].dtype)
+    return cast(
+        Any,
+        binding_layout(
+            kernel,
+            inputs=(
+                InputBinding(q_host, ("batch", "queries", "heads", "dim"),
+                             (None, query_block, None, dim), query_map),
+                InputBinding(kv_host, ("batch", "keys", "heads", "dim"),
+                             (None, keys, None, dim), kv_map),
+                InputBinding(kv_host, ("batch", "keys", "heads", "dim"),
+                             (None, keys, None, dim), kv_map),
+            ),
+            outputs=(
+                OutputBinding(out_shape[0], ("batch", "queries", "heads", "dim"),
+                              (None, query_block, None, dim), query_map),
+                OutputBinding(out_shape[1], ("batch", "heads", "queries"),
+                              (None, None, query_block), lse_map),
+            ),
+            grid=(GridBinding(0, 1, query_block, exact=True),
+                  GridBinding(0, 0, 1), GridBinding(0, 2, 1)),
+            divisible=(("keys", key_block),),
+        ),
     )
 
 
@@ -225,15 +372,15 @@ def vector_layout(
         or len(inspect.signature(kernel).parameters) != len(dtypes) + 1
     ):
         raise ValueError("Input dtypes must match the kernel input arity")
-    spec = pl.BlockSpec(block, cast(Any, index_map))
-    return Layout(
-        kernel=kernel,
-        grid=grid,
-        in_specs=(spec,) * len(dtypes),
-        out_spec=spec,
-        out_shape=out_shape,
-        input_shapes=((length,),) * len(dtypes),
-        input_dtypes=dtypes,
+    return binding_layout(
+        kernel,
+        inputs=tuple(
+            InputBinding(jax.ShapeDtypeStruct((length,), dtype), ("length",),
+                         block, index_map)
+            for dtype in dtypes
+        ),
+        outputs=(OutputBinding(out_shape, ("length",), block, index_map),),
+        grid=(GridBinding(0, 0, block_size),),
     )
 
 
@@ -292,17 +439,21 @@ def matmul_layout[
     if tuple(grid) != (rows // row_block, cols // col_block):
         raise ValueError("Grid size must match the tiled output shape")
     # BlockIndex is a static refinement of the ordinary indices Pallas supplies.
-    return Layout(
-        kernel=kernel,
-        grid=grid,
-        in_specs=(
-            pl.BlockSpec(x_block, cast(Any, x_map)),
-            pl.BlockSpec(y_block, cast(Any, y_map)),
+    return cast(
+        Any,
+        binding_layout(
+            kernel,
+            inputs=(
+                InputBinding(jax.ShapeDtypeStruct(x_shape, out_shape.dtype),
+                             ("rows", "inner"), x_block, x_map),
+                InputBinding(jax.ShapeDtypeStruct(y_shape, out_shape.dtype),
+                             ("inner", "cols"), y_block, y_map),
+            ),
+            outputs=(OutputBinding(out_shape, ("rows", "cols"),
+                                   out_block, out_map),),
+            grid=(GridBinding(0, 0, row_block, exact=True),
+                  GridBinding(0, 1, col_block, exact=True)),
         ),
-        out_spec=pl.BlockSpec(out_block, cast(Any, out_map)),
-        out_shape=out_shape,
-        input_shapes=(x_shape, y_shape),
-        input_dtypes=(out_shape.dtype, out_shape.dtype),
     )
 
 

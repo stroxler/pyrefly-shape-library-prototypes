@@ -30,8 +30,19 @@ ordinary Triton stubs were copied from v0; Gluon stubs are out of scope here.
 The first executable usage is in `../triton_examples/`.
 The 1D pointer-array overloads check that logical offsets were scaled by the
 pointer's element stride, and their load/store masks must use the same logical
-allocation length, tile width, and offset-origin category. These stubs do not
-prove predicate implication or track masked-lane validity through tensors.
+allocation length, tile width, offset-origin category, and known launch grid
+axis. Distinct grid axes are checked separately from matrix address
+orientation. The untagged axis (`-1`) from `program_id(axis: int)` or
+adding arbitrary scalar indices to offsets can match another untagged axis;
+that match supplies **no** grid-axis guarantee. Branches joining axis-zero
+and axis-one offsets retain a union that is rejected against an axis-zero-only
+mask or pointer, in both `tl.load` and `tl.store`.
+For rank-two matrix pointers, column offsets require a prior row selection:
+plain `+ row * stride` produces a rank-one pointer, while `+= row * stride`
+produces a selected-row subtype of the original rank-two pointer. This records
+at least one stride-matched shift; it does not reject a repeated shift or prove
+that the selected row remains in bounds. The stubs do not prove predicate
+implication or track masked-lane validity through tensors.
 Seeded dropout also preserves the tile width when `tl.rand` receives shifted
 unit-stride offsets, so `tl.where` and `tl.store` check its value-tile shape.
 

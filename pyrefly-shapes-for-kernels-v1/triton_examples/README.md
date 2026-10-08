@@ -39,17 +39,19 @@ body loops over successive column blocks. CPU interpretation checks a 5×7
 input with row stride 11 and block width 4 against Torch layer norm; the
 unchanged frontend body also compiles to TTIR.
 
-Important for a future v2: Pyrefly does not allow an augmented assignment to
-change an annotated matrix pointer into a lower-rank row pointer. The 2D
-pointer's `+= row * stride` therefore retains its annotated allocation type;
-adding 1D column offsets obtains a tile checked against `Cols`. That rule
-does **not** prove that the row offset was applied, that it lies inside
-`Rows`, or that the mask guards the corresponding row's addresses. The checked
-host shape/stride boundary and launch metadata are stronger guarantees than
-the row-selection analysis. A future type-system hook for in-place pointer
-selection or an explicit checked grid-to-row relation could address this
-without editing upstream kernel bodies. The scalar statistics add a second
-boundary pattern beyond the previous single-output examples.
+For the unchanged `X += row * stride` and `Y += row * stride` statements,
+Pyrefly retains selected-row subtypes of the annotated matrix pointers.
+Only those subtypes, or a lower-rank pointer produced by `+ row * stride`,
+accept 1D column offsets. A type-only negative fixture rejects unshifted
+matrix pointers plus columns, while the original layer-norm body type-checks.
+This checks row selection and declared row stride, but does **not** prove
+that the row index lies inside `Rows`, that all rows are visited, or that the
+mask protects every address. Repeating a correctly strided shift still
+produces a selected-row subtype, even if the pointer then leaves the array.
+The checked host shape/stride boundary and
+launch metadata remain stronger guarantees than this local analysis. The
+scalar statistics add a second boundary pattern beyond previous
+single-output examples.
 
 `test_low_memory_dropout.py` preserves both executable kernels from Triton's
 `python/tutorials/04-low-memory-dropout.py`. Generic unit-stride `[N]` pointer
@@ -93,6 +95,19 @@ metadata, and output allocation; kernel bodies remain unchanged. Its
 length and block size, then checks `n_elements` and `BLOCK_SIZE` at launch.
 Empty inputs return without launching a zero-sized grid; the upstream wrapper
 remains unchanged for comparison.
+
+The 1D address and bounds-mask types carry a separate launch-grid-axis tag
+in addition to their existing origin category. A type-only fixture accepts
+a load/store whose pointers and masks both use `program_id(0)`, but rejects
+the same-shaped mask built from `program_id(1)` for either operation. This
+checks an axis mismatch, not numerical equality of pointer and mask offsets
+or the host grid-to-tile mapping. A branch joining axis-zero and axis-one
+offsets does not widen the mismatch away: using those offsets on only one
+side of a load or store is rejected. An untagged axis (`-1`), produced by
+unknown scalar arithmetic or a nonliteral `program_id` axis, can match
+another untagged axis without establishing a grid relationship. The example
+suite runs Pyrefly with `--error unused-ignore`, so these negative fixtures
+fail if their expected diagnostics disappear.
 
 `test_fused_softmax.py` keeps the body of Triton's
 `python/tutorials/02-fused-softmax.py` and its handwritten launch. Its

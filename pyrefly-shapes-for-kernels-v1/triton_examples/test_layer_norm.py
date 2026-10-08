@@ -209,6 +209,33 @@ class LayerNormTest(unittest.TestCase):
 
 if TYPE_CHECKING:
 
+    def row_selection_contract[
+        Rows: IntVar, Cols: IntVar, Stride: IntVar, Tile: IntVar
+    ](
+        input_ptr: tlt.InPointer[[Rows, Cols], [Stride, 1]],
+        output_ptr: tlt.OutPointer[[Rows, Cols], [Stride, 1]],
+        stride: Int[Stride],
+        tile: Int[Tile],
+    ) -> None:
+        columns = tl.arange(0, tile)
+        input_ptr + columns  # pyrefly: ignore[unsupported-operation]
+        output_ptr + columns  # pyrefly: ignore[unsupported-operation]
+        row_offset = tl.program_id(0) * stride
+        input_ptr += row_offset
+        output_ptr += row_offset
+        assert_type(input_ptr, tlt.SelectedInRow[Rows, Cols, Stride, 1])
+        assert_type(output_ptr, tlt.SelectedOutRow[Rows, Cols, Stride, 1])
+        assert_type(input_ptr + columns, tl.InTilePointers[[Cols], [1], [Tile]])
+        assert_type(output_ptr + columns, tl.OutTilePointers[[Cols], [1], [Tile]])
+
+    def reject_wrong_row_stride[
+        Rows: IntVar, Cols: IntVar, Stride: IntVar, OtherStride: IntVar
+    ](
+        input_ptr: tlt.InPointer[[Rows, Cols], [Stride, 1]],
+        other_stride: Int[OtherStride],
+    ) -> None:
+        input_ptr += tl.program_id(0) * other_stride  # pyrefly: ignore[unsupported-operation]
+
     def typed_boundary[Rows: IntVar, Cols: IntVar, Stride: IntVar, Other: IntVar](
         x: host_tensor.Tensor[[Rows, Cols], [Stride, 1]],
         w: host_tensor.Tensor[[Cols], [1]],

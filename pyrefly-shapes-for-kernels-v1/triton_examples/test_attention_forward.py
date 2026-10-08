@@ -49,13 +49,13 @@ def _attn_fwd_inner(
     desc_v: tl.tensor_descriptor[Y, D, D, BN, D],  #
     offset_y: int,
     dtype: ConstExpr[object],
-    start_m: tl.ProgramId,
+    start_m: tl.ProgramId[Literal[0]],
     qk_scale: float,  #
     BLOCK_M: ConstExpr[Int[BM]],
     HEAD_DIM: ConstExpr[Int[D]],
     BLOCK_N: ConstExpr[Int[BN]],  #
     STAGE: ConstExpr[int],
-    offs_m: tl.Offsets[[BM], 1, str],
+    offs_m: tl.Offsets[[BM], 1, str, Literal[0]],
     offs_n: tl.Offsets[[BN]],  #
     N_CTX: ConstExpr[Int[NC]],
     warp_specialize: ConstExpr[bool],

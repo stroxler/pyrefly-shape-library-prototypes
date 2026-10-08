@@ -3,7 +3,7 @@
 import os
 import unittest
 from contextlib import nullcontext
-from typing import TYPE_CHECKING, Any, assert_type, cast
+from typing import TYPE_CHECKING, Any, Literal, assert_type, cast
 
 import torch
 import triton
@@ -231,6 +231,52 @@ class VectorAddTest(unittest.TestCase):
 
 
 if TYPE_CHECKING:
+    def check_launch_axis_mask[Length: IntVar, Width: IntVar](
+        pointer: tlt.InPointer[[Length], [1]],
+        output: tlt.OutPointer[[Length], [1]],
+        length: Int[Length],
+        width: Int[Width],
+    ) -> None:
+        offsets_0 = tl.program_id(0) * width + tl.arange(0, width)
+        offsets_1 = tl.program_id(1) * width + tl.arange(0, width)
+        assert_type(offsets_0, tl.Offsets[[Width], 1, Literal["program"], Literal[0]])
+        assert_type(offsets_1, tl.Offsets[[Width], 1, Literal["program"], Literal[1]])
+        values = tl.load(pointer + offsets_0, mask=offsets_0 < length)
+        tl.store(output + offsets_0, values, mask=offsets_0 < length)
+        tl.load(  # pyrefly: ignore[no-matching-overload]
+            pointer + offsets_0, mask=offsets_1 < length
+        )
+        tl.store(  # pyrefly: ignore[no-matching-overload]
+            output + offsets_0, values, mask=offsets_1 < length
+        )
+
+    def check_joined_axis[Length: IntVar, Width: IntVar](
+        pointer: tlt.InPointer[[Length], [1]],
+        output: tlt.OutPointer[[Length], [1]],
+        values: tl.tensor[[Width]],
+        length: Int[Length],
+        width: Int[Width],
+        condition: bool,
+    ) -> None:
+        offsets_0 = tl.program_id(0) * width + tl.arange(0, width)
+        offsets_1 = tl.program_id(1) * width + tl.arange(0, width)
+        if condition:
+            offsets = offsets_0
+        else:
+            offsets = offsets_1
+        tl.load(  # pyrefly: ignore[no-matching-overload]
+            pointer + offsets, mask=offsets_0 < length
+        )
+        tl.load(  # pyrefly: ignore[no-matching-overload]
+            pointer + offsets_0, mask=offsets < length
+        )
+        tl.store(  # pyrefly: ignore[no-matching-overload]
+            output + offsets, values, mask=offsets_0 < length
+        )
+        tl.store(  # pyrefly: ignore[no-matching-overload]
+            output + offsets_0, values, mask=offsets < length
+        )
+
     typed_input: torch.Tensor[[7]] = torch.arange(7)
     typed_view = as_host_tensor(typed_input)
     assert_type(

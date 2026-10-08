@@ -431,12 +431,12 @@ class AttentionHeadLocalStatsPointer[Tokens: IntVar]:
 class Attention3DStatsPointer[Batch: IntVar, Heads: IntVar, Tokens: IntVar](
     AttentionHeadLocalStatsPointer[Tokens]
 ):
-    def __iadd__(
-        self, start: TileStart[[Tokens]]
+    def __iadd__[GridAxis: int](
+        self, start: TileStart[[Tokens], GridAxis]
     ) -> Attention3DStatsPointer[Batch, Heads, Tokens]: ...
     @overload
-    def __add__(
-        self, start: TileStart[[Tokens]]
+    def __add__[GridAxis: int](
+        self, start: TileStart[[Tokens], GridAxis]
     ) -> Attention3DHeadPointer[Batch, Heads, Tokens]: ...
     @overload
     def __add__[BM: IntVar](
@@ -532,8 +532,8 @@ class AttentionHeadLocalStatsTilePointers[Tokens: IntVar, BM: IntVar]: ...
 
 class AttentionStatsPointer[Heads: IntVar, Tokens: IntVar]:
     @overload
-    def __add__(
-        self, offset: TileStart[[Tokens]]
+    def __add__[GridAxis: int](
+        self, offset: TileStart[[Tokens], GridAxis]
     ) -> AttentionStatsRow[Heads, Tokens]: ...
     @overload
     def __add__[Tile: IntTuple](
@@ -541,8 +541,8 @@ class AttentionStatsPointer[Heads: IntVar, Tokens: IntVar]:
     ) -> AttentionStatsTilePointers[Heads, Tokens, Tile]: ...
 
 class AttentionStatsRow[Heads: IntVar, Tokens: IntVar]:
-    def __add__[Tile: IntTuple, Origin: str](
-        self, offsets: Offsets[Tile, 1, Origin]
+    def __add__[Tile: IntTuple, Origin: str, GridAxis: int](
+        self, offsets: Offsets[Tile, 1, Origin, GridAxis]
     ) -> AttentionStatsTilePointers[Heads, Tokens, Tile]: ...
 
 class AttentionStatsTilePointers[Heads: IntVar, Tokens: IntVar, Tile: IntTuple]: ...
@@ -570,8 +570,10 @@ def make_tensor_descriptor[Groups: IntVar, BR: IntVar, BC: IntVar](
     block_shape: IntListLiteral[[BR, BC]],
 ) -> tensor_descriptor[int, int, int, BR, BC]: ...
 
-class ProgramId:
-    def __mul__[Block: IntVar](self, block: Int[Block]) -> TileStart[[Block]]: ...
+class ProgramId[GridAxis: int = Literal[-1]]:
+    def __mul__[Block: IntVar](
+        self, block: Int[Block]
+    ) -> TileStart[[Block], GridAxis]: ...
     def __add__(self, other: int) -> int: ...
     def __floordiv__(self, other: int) -> int: ...
     def __sub__(self, other: int) -> int: ...
@@ -582,7 +584,7 @@ class ProgramId:
     @overload
     def __mod__(self, other: int) -> int: ...
 
-class AttentionBatchHeadProgramId(ProgramId):
+class AttentionBatchHeadProgramId(ProgramId[Literal[2]]):
     @overload
     def __floordiv__[Heads: IntVar](
         self, other: AttentionHeadCount[Heads]
@@ -652,12 +654,12 @@ class LockArrayPointer[Groups: IntVar, Capacity: IntVar]:
 
 class CountPointer[Groups: IntVar]: ...
 
-class TileStart[Tile: IntTuple](int):
-    def to(self, dtype: object) -> TileStart[Tile]: ...
+class TileStart[Tile: IntTuple, GridAxis: int = Literal[-1]](int):
+    def to(self, dtype: object) -> TileStart[Tile, GridAxis]: ...
     def __rsub__(self, other: int) -> int: ...
     def __radd__(self, other: int) -> int: ...
     def __mul__[HeadDim: IntVar, Tokens: IntVar](
-        self: TileStart[[HeadDim]], extent: Int[Tokens]
+        self: TileStart[[HeadDim], GridAxis], extent: Int[Tokens]
     ) -> ScaledTileStart[HeadDim, Tokens]: ...
     @overload
     def __add__(self, offset: int) -> int: ...
@@ -671,8 +673,8 @@ class TileStart[Tile: IntTuple](int):
     ) -> ColumnAxisOffsets[Cols]: ...
     @overload
     def __add__(
-        self, offsets: Offsets[Tile, 1, Literal["local"]]
-    ) -> Offsets[Tile, 1, Literal["program"]]: ...
+        self, offsets: Offsets[Tile, 1, Literal["local"], Literal[-1]]
+    ) -> Offsets[Tile, 1, Literal["program"], GridAxis]: ...
 
 class ScaledTileStart[HeadDim: IntVar, Tokens: IntVar]:
     def __iadd__(self, step: Int[HeadDim]) -> ScaledTileStart[HeadDim, Tokens]: ...
@@ -685,17 +687,22 @@ class SplitAddress[Stride: IntVar]: ...
 class SplitStride[Stride: IntVar](int):
     def __rmul__(self, index: int) -> SplitAddress[Stride]: ...
 
-class Offsets[Tile: IntTuple, Stride: IntVar = 1, Origin: str = Literal["local"]]:
-    def to(self, dtype: object) -> Offsets[Tile, Stride, Origin]: ...
+class Offsets[
+    Tile: IntTuple,
+    Stride: IntVar = 1,
+    Origin: str = Literal["local"],
+    GridAxis: int = Literal[-1],
+]:
+    def to(self, dtype: object) -> Offsets[Tile, Stride, Origin, GridAxis]: ...
     def __add__(self, value: int) -> tensor[Tile]: ...
     def __lt__[N: IntVar](
-        self: Offsets[Tile, 1, Origin], bound: Int[N]
-    ) -> Mask[[N], Tile, Origin]: ...
+        self: Offsets[Tile, 1, Origin, GridAxis], bound: Int[N]
+    ) -> Mask[[N], Tile, Origin, GridAxis]: ...
     def __radd__(self, start: int) -> Offsets[Tile, Stride, Literal["shifted"]]: ...
     def __mod__[N: IntVar](self, bound: Int[N]) -> WrappedOffsets[N, Tile]: ...
     def __mul__[Step: IntVar](
         self, stride: Int[Step]
-    ) -> ScaledOffsets[Tile, Step, Origin]: ...
+    ) -> ScaledOffsets[Tile, Step, Origin, GridAxis]: ...
     @overload
     def __getitem__(
         self, index: tuple[slice, None]
@@ -796,8 +803,13 @@ class RowAddress[Tile: IntTuple, Stride: IntVar]:
 class GroupedMatrixOffsets[TileRows: IntTuple, TileCols: IntTuple, Stride: IntVar]: ...
 class ColumnAddress[Tile: IntTuple, Stride: IntVar]: ...
 class ColumnMajorMatrixOffsets[Rows: IntVar, Cols: IntVar, Stride: IntVar]: ...
-class ScaledOffsets[Tile: IntTuple, Stride: IntVar, Origin: str = Literal["local"]](
-    Offsets[Tile, Stride, Origin]
+class ScaledOffsets[
+    Tile: IntTuple,
+    Stride: IntVar,
+    Origin: str = Literal["local"],
+    GridAxis: int = Literal[-1],
+](
+    Offsets[Tile, Stride, Origin, GridAxis]
 ): ...
 
 # Grouped GEMM receives device arrays of raw addresses and packed metadata.
@@ -1057,7 +1069,12 @@ class ScratchTilePointers[
     TileCols: IntVar,
 ]: ...
 
-class Mask[Target: IntTuple, Tile: IntTuple, Origin: str = Literal["local"]]:
+class Mask[
+    Target: IntTuple,
+    Tile: IntTuple,
+    Origin: str = Literal["local"],
+    GridAxis: int = Literal[-1],
+]:
     def __getitem__[Rows: IntVar, BR: IntVar](
         self: Mask[[Rows], [BR]], index: tuple[slice, None]
     ) -> RowMask[Rows, [BR]]: ...
@@ -1070,6 +1087,7 @@ class InTilePointers[
     Strides: IntTuple,
     Tile: IntTuple,
     Origin: str = Literal["local"],
+    GridAxis: int = Literal[-1],
 ]:
     @overload
     def __iadd__[
@@ -1081,11 +1099,11 @@ class InTilePointers[
         TileCols: IntVar,
     ](
         self: InTilePointers[
-            [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_0"]
+            [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_0"], GridAxis
         ],
         step: Int[TileCols * CS],
     ) -> InTilePointers[
-        [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_0"]
+        [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_0"], GridAxis
     ]: ...
     @overload
     def __iadd__[
@@ -1097,11 +1115,11 @@ class InTilePointers[
         TileCols: IntVar,
     ](
         self: InTilePointers[
-            [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_1"]
+            [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_1"], GridAxis
         ],
         step: Int[TileRows * RS],
     ) -> InTilePointers[
-        [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_1"]
+        [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["wrapped_1"], GridAxis
     ]: ...
 
 class InColumnTilePointers[Cols: IntVar, BC: IntVar]: ...
@@ -1111,6 +1129,7 @@ class OutTilePointers[
     Strides: IntTuple,
     Tile: IntTuple,
     Origin: str = Literal["local"],
+    GridAxis: int = Literal[-1],
 ]:
     def __add__[
         Rows: IntVar,
@@ -1296,14 +1315,18 @@ class RowRange[Rows: IntVar]:
 @overload
 def program_id(axis: Literal[2]) -> AttentionBatchHeadProgramId: ...
 @overload
+def program_id(axis: Literal[0]) -> ProgramId[Literal[0]]: ...
+@overload
+def program_id(axis: Literal[1]) -> ProgramId[Literal[1]]: ...
+@overload
 def program_id(axis: int) -> ProgramId: ...
 def num_programs(axis: int) -> ProgramCount: ...
 
 class ProgramCount(int): ...
 
 @overload
-def range[Rows: IntVar](
-    start: ProgramId, stop: Int[Rows], step: ProgramCount, *, num_stages: int
+def range[Rows: IntVar, GridAxis: int](
+    start: ProgramId[GridAxis], stop: Int[Rows], step: ProgramCount, *, num_stages: int
 ) -> RowRange[Rows]: ...
 @overload
 def range(start: Literal[0], stop: int) -> Iterator[int]: ...
@@ -1328,8 +1351,8 @@ def range[Cols: IntVar, Block: IntVar](
     start: Literal[0], stop: Int[Cols], step: Int[Block], *, multi_cta: bool
 ) -> Iterator[int]: ...
 @overload
-def range[SMs: IntVar](
-    start: ProgramId, stop: int, step: Int[SMs], *, flatten: Literal[True]
+def range[SMs: IntVar, GridAxis: int](
+    start: ProgramId[GridAxis], stop: int, step: Int[SMs], *, flatten: Literal[True]
 ) -> Iterator[int]: ...
 @overload
 def range(
@@ -1376,8 +1399,8 @@ def range(
     disallow_acc_multi_buffer: bool,
 ) -> Iterator[int]: ...
 @overload
-def range[SMs: IntVar](
-    start: ProgramId,
+def range[SMs: IntVar, GridAxis: int](
+    start: ProgramId[GridAxis],
     stop: int,
     step: Int[SMs],
     *,
@@ -1385,8 +1408,8 @@ def range[SMs: IntVar](
     warp_specialize: bool,
 ) -> Iterator[int]: ...
 @overload
-def range[SMs: IntVar](
-    start: ProgramId,
+def range[SMs: IntVar, GridAxis: int](
+    start: ProgramId[GridAxis],
     stop: int,
     step: Int[SMs],
     *,
@@ -1394,8 +1417,8 @@ def range[SMs: IntVar](
     warp_specialize: bool,
 ) -> Iterator[int]: ...
 @overload
-def range[SMs: IntVar](
-    start: ProgramId,
+def range[SMs: IntVar, GridAxis: int](
+    start: ProgramId[GridAxis],
     stop: int,
     step: Int[SMs],
     *,
@@ -1536,8 +1559,8 @@ def where[Dim: IntVar, Tile: IntTuple](
 def where[Tile: IntTuple](
     condition: tensor[Tile], x: float, y: float
 ) -> tensor[Tile]: ...
-def rand[Tile: IntTuple, Origin: str](
-    seed: int, offsets: Offsets[Tile, 1, Origin]
+def rand[Tile: IntTuple, Origin: str, GridAxis: int](
+    seed: int, offsets: Offsets[Tile, 1, Origin, GridAxis]
 ) -> tensor[Tile]: ...
 def sqrt[Tile: IntTuple](value: tensor[Tile]) -> tensor[Tile]: ...
 def atomic_cas[Groups: IntVar, Capacity: IntVar](
@@ -1631,14 +1654,18 @@ def load[Tokens: IntVar, BM: IntVar](
 @overload
 def load[Groups: IntVar](ptr: CountPointer[Groups]) -> tensor[[]]: ...
 @overload
-def load[Target: IntTuple, Strides: IntTuple, Tile: IntTuple, Origin: str](
-    ptrs: InTilePointers[Target, Strides, Tile, Origin],
-    mask: Mask[Target, Tile, Origin],
+def load[
+    Target: IntTuple, Strides: IntTuple, Tile: IntTuple, Origin: str, GridAxis: int
+](
+    ptrs: InTilePointers[Target, Strides, Tile, Origin, GridAxis],
+    mask: Mask[Target, Tile, Origin, GridAxis],
 ) -> tensor[Tile]: ...
 @overload
-def load[Target: IntTuple, Strides: IntTuple, Tile: IntTuple, Origin: str](
-    ptrs: InTilePointers[Target, Strides, Tile, Origin],
-    mask: Mask[Target, Tile, Origin],
+def load[
+    Target: IntTuple, Strides: IntTuple, Tile: IntTuple, Origin: str, GridAxis: int
+](
+    ptrs: InTilePointers[Target, Strides, Tile, Origin, GridAxis],
+    mask: Mask[Target, Tile, Origin, GridAxis],
     *,
     other: float,
 ) -> tensor[Tile]: ...
@@ -1791,10 +1818,12 @@ def store[Groups: IntVar, Cols: IntVar, Tile: IntVar](
     mask: Mask[[Cols], [Tile]],
 ) -> None: ...
 @overload
-def store[Target: IntTuple, Strides: IntTuple, Tile: IntTuple, Origin: str](
-    ptrs: OutTilePointers[Target, Strides, Tile, Origin],
+def store[
+    Target: IntTuple, Strides: IntTuple, Tile: IntTuple, Origin: str, GridAxis: int
+](
+    ptrs: OutTilePointers[Target, Strides, Tile, Origin, GridAxis],
     value: tensor[Tile],
-    mask: Mask[Target, Tile, Origin],
+    mask: Mask[Target, Tile, Origin, GridAxis],
 ) -> None: ...
 @overload
 def store[
