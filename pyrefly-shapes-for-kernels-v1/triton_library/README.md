@@ -3,9 +3,14 @@
 `semantic_jit.py` translates static-only semantic annotations into Triton's
 runtime signature and source. Its static `SemanticKernel` adapter keeps the
 decorated function signature for grid-indexed launches; a JIT function is
-still the actual runtime object. With evaluated pointer annotations, a
-pre-run hook checks that actual Torch shapes, strides, and matching scalar
-arguments agree for both JIT and interpreter launches. `tlt.py` provides
+still the actual runtime object. With runtime-checkable pointer annotations,
+including postponed `tlt.InPointer` and `tlt.OutPointer` annotations, a pre-run
+hook checks actual Torch shapes, strides, and matching scalar arguments for
+both JIT and interpreter launches. It also checks `Int[...]` inside
+`ConstExpr[...]` and permits unannotated parameters. Postponed annotations
+currently recognize those exact names, rather than arbitrary imported aliases;
+stub-only pointer forms that cannot be evaluated at runtime do not register
+this hook. `tlt.py` provides
 evaluable pointer markers, with their arithmetic specified in `tlt.pyi`.
 `host_tensor.py` is a separate Torch-side layout view: `as_host_tensor(x)`
 checks a vector's unit element stride or, by default, a matrix's unit inner

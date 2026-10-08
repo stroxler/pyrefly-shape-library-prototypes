@@ -123,7 +123,7 @@ def _validate_pointer_arguments(
 
     annotations = getattr(fn, "__semantic_annotations__")
     for name, value in bound.arguments.items():
-        annotation = annotations[name]
+        annotation = annotations.get(name)
         kind = get_origin(annotation)
         if kind not in (tlt.InPointer, tlt.OutPointer):
             continue
@@ -150,7 +150,9 @@ def _validate_pointer_arguments(
             raise ValueError(f"{name} must not have overlapping elements")
 
     for name, value in bound.arguments.items():
-        annotation = annotations[name]
+        annotation = annotations.get(name)
+        if get_origin(annotation) is ConstExpr:
+            annotation = get_args(annotation)[0]
         if get_origin(annotation) is Int:
             if type(value) is not int:
                 raise ValueError(f"{name} must be an integer")
@@ -159,7 +161,20 @@ def _validate_pointer_arguments(
 
 def semantic_jit[F: Callable[..., object]](fn: F) -> SemanticKernel[F]:
     """Translate semantic annotations for both the compiler and interpreter."""
-    setattr(fn, "__semantic_annotations__", dict(fn.__annotations__))
+    # Postponed annotations need evaluation only for the runtime-checkable markers.
+    setattr(
+        fn,
+        "__semantic_annotations__",
+        {
+            name: eval(annotation, fn.__globals__)
+            if isinstance(annotation, str)
+            and annotation.startswith(
+                ("tlt.InPointer[", "tlt.OutPointer[", "Int[", "ConstExpr[")
+            )
+            else annotation
+            for name, annotation in fn.__annotations__.items()
+        },
+    )
     strip_semantic_annotations(fn)
     kernel = triton.jit(fn)
     if isinstance(kernel, JITFunction):

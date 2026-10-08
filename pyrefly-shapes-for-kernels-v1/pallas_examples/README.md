@@ -34,10 +34,10 @@ represent logical indices rather than Triton-style pointer addresses.
 
 For v2, test the statistic-output shape mismatch as well as input mismatch:
 the scalar JAX stubs now describe `Array[[]]` and `ShapeDtypeStruct[[]]`,
-whereas v1's general layout builder still describes only single-output
-layouts. The row-statistics layout is deliberately specific to this kernel
-signature; generalizing checked layouts across heterogeneous output tuples
-and optional kernel outputs requires more than the existing arity overloads.
+but the current multi-output layouts have kernel-specific signatures. The
+row-statistics layout is deliberately specific to this kernel; generalizing
+checked layouts across heterogeneous output tuples and optional kernel outputs
+requires more than the existing arity overloads.
 Neither the loop's grid coverage nor its per-lane mask implication is proved
 by these types. The Triton forward equivalent uses a row-per-program grid,
 while this Pallas row kernel has an empty grid and could be vmapped across

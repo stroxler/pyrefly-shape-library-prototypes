@@ -4,9 +4,9 @@ The [Triton library](triton_library/README.md) and
 [Triton examples](triton_examples/README.md) are separate from the
 [Pallas library](pallas_library/README.md) and
 [Pallas examples](pallas_examples/README.md). The v1 overlays were derived
-from v0 but are independently owned; Gluon stubs remain only in v0. The current
-executable experiment uses a single `@semantic_jit` decorator around Triton's
-JIT, starting with the vector-add body from
+from v0 but are independently owned; Gluon stubs remain only in v0. The
+executable Triton experiments use `@semantic_jit` around kernel entrypoints,
+starting with the vector-add body from
 `python/tutorials/01-vector-add.py`. The kernel body is unchanged; the local
 Triton stubs model allocation and mask semantics. Module-level `IntVar` declarations bind
 symbolic `N` and `Block` with legacy-style generics; the kernel uses the same
@@ -80,23 +80,14 @@ Run these probes from this directory:
 
 ```sh
 ../.venv/bin/pyrefly check -c pyrefly.toml
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_vector_add
-TRITON_INTERPRET=1 /home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_vector_add
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v pallas_examples.test_vector_add
-TRITON_INTERPRET=1 /home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_fused_softmax
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_fused_softmax
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_strided_copy
-TRITON_INTERPRET=1 /home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_strided_copy
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v pallas_examples.test_masked_softmax
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v pallas_examples.test_blocked_matmul
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_matrix_multiplication
-TRITON_INTERPRET=1 /home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_matrix_multiplication
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_low_memory_dropout
-TRITON_INTERPRET=1 /home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v triton_examples.test_low_memory_dropout
-/home/stroxler/.kernel-shapes-venv/bin/python -m unittest -v pallas_examples.test_dropout
+/home/stroxler/.kernel-shapes-venv/bin/python -m unittest discover -s triton_examples -p 'test_*.py'
+TRITON_INTERPRET=1 /home/stroxler/.kernel-shapes-venv/bin/python -m unittest discover -s triton_examples -p 'test_*.py'
+/home/stroxler/.kernel-shapes-venv/bin/python -m unittest discover -s pallas_examples -p 'test_*.py'
 ```
 
-Pyrefly reports zero errors for the symbolic body. A normal JIT captures the
+Pyrefly currently reports zero diagnostics with 15 intentionally suppressed
+diagnostics across the examples; this does not imply that every kernel operation
+has a semantic shape rule. A normal JIT captures the
 intended parameter annotations and computes its dependency hash over the
 translated source. Frontend compilation with a virtual CUDA SM80 target produces
 TTIR without an attached GPU; `triton_examples.testing.compile_ttir` returns
@@ -131,3 +122,43 @@ but neither checked boundary proves that arbitrary index-map arithmetic or
 grid traversal aligns with the operations inside the kernel. Mapping whole host shapes to Ref tile
 shapes to Ref tile shapes for arbitrary kernels would require a more general
 parameter-list mapping operator or a Pyrefly hook; neither is part of v1.
+
+## Review findings and v2 questions
+
+The checked Python interfaces are useful shape contracts, but they are not
+proofs that a kernel accesses or writes every intended element. Triton's
+output layouts check grid sizes and named launch arguments; they do not prove
+program-ID arithmetic. Pallas's typed index maps reject simple axis mistakes,
+but its pattern-specific layout factories construct `BlockSpec`s behind a
+generic `Layout` that stores them as `object`, and `checked_pallas_call` trusts
+the constructed layout when it casts the underlying call's result. Both
+languages still need explicit negative tests for wrong indexing and masks.
+For example, Triton's two-dimensional pointer overload allows adding column
+offsets to produce a row tile without first checking that a row was selected.
+Simply removing that overload would also reject layer norm: Pyrefly keeps
+its matrix pointer type after the kernel's in-place row shift (`+=`). A stricter
+row-selection rule needs either a way to refine that type or explicit evidence
+from the kernel body. The existing mask checks similarly match allocation,
+tile width, and a coarse offset-origin category, not the exact address or
+program-ID axis that produced a predicate.
+
+Triton's direct-launch validator resolves the runtime-checkable semantic
+annotations even when they are postponed strings, ignores unannotated
+parameters, and checks symbolic integers nested inside `ConstExpr[...]`.
+`triton_examples/test_semantic_jit.py` exercises these cases in both JIT and
+interpreter modes. This is not a general annotation evaluator: stub-only
+annotations such as attention's `tl.AttentionPointer` cannot register this
+pointer hook. The checked attention host adapter validates its inputs; direct
+launches of that kernel bypass those adapter checks. Checked host adapters
+remain the intended safety boundary in v1.
+
+For v2, try a composable description of host axes, tile/Ref axes, and grid
+mappings before adding more kernel-specific layout factories or address/mask
+overloads. [Three candidate experiments](NEXT_SEMANTIC_TYPE_EXPERIMENTS.md)
+sketch row selection, mask provenance, and composable Pallas layouts, with
+specific negative probes. The [Triton addressing design](TRITON_ADDRESSING_DESIGN.md)
+explores a possible future combination of one reviewed PID intent annotation,
+semantic operator rules, and runtime-identity wrappers, without changing the
+v1 kernel bodies. A runtime bounds sanitizer could complement static
+checks, but neither that nor static per-lane validity or full grid coverage is
+implemented here.
