@@ -4,7 +4,8 @@
 runtime signature and source. Its static `SemanticKernel` adapter keeps the
 decorated function signature for grid-indexed launches; a JIT function is
 still the actual runtime object. With runtime-checkable pointer annotations,
-including postponed `tlt.InPointer` and `tlt.OutPointer` annotations, a pre-run
+including postponed `tlt.InPointer`, `tlt.OutPointer`, and `tlt.InOutPointer`
+annotations, a pre-run
 hook checks actual Torch shapes, strides, and matching scalar arguments for
 both JIT and interpreter launches. It also checks `Int[...]` inside
 `ConstExpr[...]` and permits unannotated parameters. Postponed annotations
@@ -38,10 +39,17 @@ that match supplies **no** grid-axis guarantee. Branches joining axis-zero
 and axis-one offsets retain a union that is rejected against an axis-zero-only
 mask or pointer, in both `tl.load` and `tl.store`.
 For rank-two matrix pointers, column offsets require a prior row selection:
-plain `+ row * stride` produces a rank-one pointer, while `+= row * stride`
-produces a selected-row subtype of the original rank-two pointer. This records
-at least one stride-matched shift; it does not reject a repeated shift or prove
-that the selected row remains in bounds. The stubs do not prove predicate
+`x_row = X + row * stride` produces a rank-one pointer. Rebinding annotated
+parameters with `+=` would retain their declared rank, so these examples use
+fresh local names. This records a stride-matched shift but does not prove
+that the selected row remains in bounds. `InOutPointer` is a generic
+read/write allocation pointer used for grouped scratch and lock storage;
+selecting one scratch row lowers its rank, while vector offsets produce
+`InOutTilePointers`, an array of addresses. The lock/count allocation retains
+a separate `LockArrayPointer` role so arbitrary read/write vectors cannot be
+passed to atomic lock operations. Its length is checked as `2 * Groups` at
+runtime; selecting one lock yields `LockSlotPointer`, then its count address
+has a distinct role. The stubs do not prove predicate
 implication or track masked-lane validity through tensors.
 Seeded dropout also preserves the tile width when `tl.rand` receives shifted
 unit-stride offsets, so `tl.where` and `tl.store` check its value-tile shape.

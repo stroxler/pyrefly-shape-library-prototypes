@@ -125,7 +125,7 @@ def _validate_pointer_arguments(
     for name, value in bound.arguments.items():
         annotation = annotations.get(name)
         kind = get_origin(annotation)
-        if kind not in (tlt.InPointer, tlt.OutPointer):
+        if kind not in (tlt.InPointer, tlt.OutPointer, tlt.InOutPointer):
             continue
         if not isinstance(value, torch.Tensor):
             raise ValueError(f"{name} must be a Torch tensor")
@@ -141,7 +141,7 @@ def _validate_pointer_arguments(
         ):
             check(stride, actual, f"{name}.stride({index})")
         if (
-            kind is tlt.OutPointer
+            kind in (tlt.OutPointer, tlt.InOutPointer)
             and value.ndim == 2
             and value.stride(1) == 1
             and value.shape[0] > 1
@@ -169,7 +169,13 @@ def semantic_jit[F: Callable[..., object]](fn: F) -> SemanticKernel[F]:
             name: eval(annotation, fn.__globals__)
             if isinstance(annotation, str)
             and annotation.startswith(
-                ("tlt.InPointer[", "tlt.OutPointer[", "Int[", "ConstExpr[")
+                (
+                    "tlt.InPointer[",
+                    "tlt.OutPointer[",
+                    "tlt.InOutPointer[",
+                    "Int[",
+                    "ConstExpr[",
+                )
             )
             else annotation
             for name, annotation in fn.__annotations__.items()
@@ -185,7 +191,7 @@ def semantic_jit[F: Callable[..., object]](fn: F) -> SemanticKernel[F]:
     else:
         raise TypeError(f"Unsupported Triton JIT implementation: {type(kernel)}")
     if any(
-        get_origin(annotation) in (tlt.InPointer, tlt.OutPointer)
+        get_origin(annotation) in (tlt.InPointer, tlt.OutPointer, tlt.InOutPointer)
         for annotation in getattr(fn, "__semantic_annotations__").values()
     ):
         kernel.add_pre_run_hook(

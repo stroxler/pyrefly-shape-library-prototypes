@@ -116,3 +116,15 @@ class OutPointer[Target: IntTuple, Strides: IntTuple]:
     ) -> tl.OutTilePointers[
         [Rows, Cols], [RowStride, ColStride], [TileRows, 1], Literal["axis_0"]
     ]: ...
+
+class InOutPointer[Target: IntTuple, Strides: IntTuple]:
+    @overload
+    def __add__[Groups: IntVar, Cols: IntVar](
+        self: InOutPointer[[Groups, Cols], [Cols, 1]],
+        start: tl.GroupStart[Groups, Cols],
+    ) -> InOutPointer[[Cols], [1]]: ...
+    @overload
+    def __add__[Cols: IntVar, Tile: IntTuple, Origin: str, GridAxis: int](
+        self: InOutPointer[[Cols], [1]],
+        offsets: tl.Offsets[Tile, 1, Origin, GridAxis],
+    ) -> tl.InOutTilePointers[[Cols], [1], Tile, Origin, GridAxis]: ...

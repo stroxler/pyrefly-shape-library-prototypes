@@ -10,7 +10,7 @@ from typing import Literal, overload
 
 from shape_extensions import Int, IntListLiteral, IntTuple, IntVar
 
-from triton_library.tlt import InPointer, OutPointer
+from triton_library.tlt import InOutPointer, InPointer, OutPointer
 
 from . import extra, math
 
@@ -610,46 +610,10 @@ class GroupOffsets[Groups: IntVar, Cols: IntVar, Tile: IntTuple]:
         self: GroupOffsets[int, Cols, [Cols]], index: tuple[None, slice]
     ) -> ColumnAxisOffsets[[Cols]]: ...
 
-class GroupedScratchPointer[Groups: IntVar, Cols: IntVar, Tile: IntVar]:
-    @overload
-    def __add__(
-        self, start: GroupStart[Groups, Cols]
-    ) -> GroupedScratchRow[Groups, Cols, Tile]: ...
-    @overload
-    def __add__[TileRows: IntVar](
-        self, address: GroupedMatrixOffsets[[TileRows], [Tile], Cols]
-    ) -> GroupedScratchMatrixPointers[Groups, Cols, TileRows, Tile]: ...
-
-class GroupedScratchRow[Groups: IntVar, Cols: IntVar, Tile: IntVar](
-    GroupedScratchPointer[Groups, Cols, Tile]
-):
-    @overload
-    def __add__(
-        self, start: GroupStart[Groups, Cols]
-    ) -> GroupedScratchRow[Groups, Cols, Tile]: ...
-    @overload
-    def __add__(
-        self, cols: Offsets[[Tile]]
-    ) -> GroupedScratchTile[Groups, Cols, Tile]: ...
-    @overload
-    def __add__[TileRows: IntVar](
-        self, address: GroupedMatrixOffsets[[TileRows], [Tile], Cols]
-    ) -> GroupedScratchMatrixPointers[Groups, Cols, TileRows, Tile]: ...
-
-class GroupedScratchTile[Groups: IntVar, Cols: IntVar, Tile: IntVar](
-    GroupedScratchRow[Groups, Cols, Tile]
-): ...
-class GroupedScratchMatrixPointers[
-    Groups: IntVar,
-    Cols: IntVar,
-    TileRows: IntVar,
-    TileCols: IntVar,
-]: ...
-
 class LockArrayPointer[Groups: IntVar, Capacity: IntVar]:
-    def __iadd__(
-        self, index: GroupIndex[Groups]
-    ) -> LockArrayPointer[Groups, Capacity]: ...
+    def __add__(self, index: GroupIndex[Groups]) -> LockSlotPointer[Groups]: ...
+
+class LockSlotPointer[Groups: IntVar]:
     def __add__(self, span: Int[Groups]) -> CountPointer[Groups]: ...
 
 class CountPointer[Groups: IntVar]: ...
@@ -1081,6 +1045,14 @@ class Mask[
 
 class InScalarPointer[Target: IntTuple]: ...
 class OutScalarPointer[Target: IntTuple]: ...
+
+class InOutTilePointers[
+    Target: IntTuple,
+    Strides: IntTuple,
+    Tile: IntTuple,
+    Origin: str = Literal["local"],
+    GridAxis: int = Literal[-1],
+]: ...
 
 class InTilePointers[
     Target: IntTuple,
@@ -1563,13 +1535,11 @@ def rand[Tile: IntTuple, Origin: str, GridAxis: int](
     seed: int, offsets: Offsets[Tile, 1, Origin, GridAxis]
 ) -> tensor[Tile]: ...
 def sqrt[Tile: IntTuple](value: tensor[Tile]) -> tensor[Tile]: ...
-def atomic_cas[Groups: IntVar, Capacity: IntVar](
-    ptr: LockArrayPointer[Groups, Capacity], old: int, new: int
+def atomic_cas[Groups: IntVar](
+    ptr: LockSlotPointer[Groups], old: int, new: int
 ) -> int: ...
 @overload
-def atomic_xchg[Groups: IntVar, Capacity: IntVar](
-    ptr: LockArrayPointer[Groups, Capacity], new: int
-) -> None: ...
+def atomic_xchg[Groups: IntVar](ptr: LockSlotPointer[Groups], new: int) -> None: ...
 @overload
 def atomic_xchg[Groups: IntVar](ptr: CountPointer[Groups], new: int) -> None: ...
 def debug_barrier() -> None: ...
@@ -1713,17 +1683,12 @@ def load[Rows: IntVar, Cols: IntVar, BM: IntVar, BN: IntVar](
     other: float,
 ) -> tensor[[BM, BN]]: ...
 @overload
-def load[Groups: IntVar, Cols: IntVar, Tile: IntVar](
-    ptrs: GroupedScratchTile[Groups, Cols, Tile],
-    mask: Mask[[Cols], [Tile]],
-) -> tensor[[Tile]]: ...
-@overload
-def load[Groups: IntVar, Cols: IntVar, TileRows: IntVar, TileCols: IntVar](
-    ptrs: GroupedScratchMatrixPointers[Groups, Cols, TileRows, TileCols],
-    mask: MatrixMask[Groups, Cols, [TileRows], [TileCols]],
-    *,
-    other: float,
-) -> tensor[[TileRows, TileCols]]: ...
+def load[
+    Target: IntTuple, Strides: IntTuple, Tile: IntTuple, Origin: str, GridAxis: int
+](
+    ptrs: InOutTilePointers[Target, Strides, Tile, Origin, GridAxis],
+    mask: Mask[Target, Tile, Origin, GridAxis],
+) -> tensor[Tile]: ...
 @overload
 def load[
     Rows: IntVar,
@@ -1812,10 +1777,12 @@ def store[Heads: IntVar, Tokens: IntVar, Tile: IntTuple](
     ptr: AttentionStatsTilePointers[Heads, Tokens, Tile], value: tensor[Tile]
 ) -> None: ...
 @overload
-def store[Groups: IntVar, Cols: IntVar, Tile: IntVar](
-    ptrs: GroupedScratchTile[Groups, Cols, Tile],
-    value: tensor[[Tile]],
-    mask: Mask[[Cols], [Tile]],
+def store[
+    Target: IntTuple, Strides: IntTuple, Tile: IntTuple, Origin: str, GridAxis: int
+](
+    ptrs: InOutTilePointers[Target, Strides, Tile, Origin, GridAxis],
+    value: tensor[Tile],
+    mask: Mask[Target, Tile, Origin, GridAxis],
 ) -> None: ...
 @overload
 def store[

@@ -1,22 +1,27 @@
 # Triton examples
 
 `test_layer_norm_backward.py` retains Triton's fused backward input-gradient
-algorithm. It names selected input/output rows and scratch tiles separately
-instead of rebinding the upstream pointer parameters; comments mark both
+algorithm. It names selected input/output rows, scratch tiles, and the scalar
+lock pointer separately instead of rebinding upstream parameters; comments mark
 departures. It writes DX and grouped partial weight/bias gradients, so the
 checked host call explicitly allocates `[Groups, Cols]` scratch buffers and
 zero-initialized `[2 * Groups]` lock/count storage. The output layout checks
 one program per row, shared row strides, the column count and block width,
 and the group-size launch argument. `checked_grouped_scratch` and
-`checked_group_locks` validate the extra allocations before presenting the
-stub-only pointer roles at launch. Frontend compilation and CPU interpretation
+`checked_group_locks` validate the extra allocations before presenting generic
+`InOutPointer` scratch views and a role-specific lock pointer at launch. The
+scratch row is a rank-one pointer; adding
+column offsets creates an `InOutTilePointers` address array. A scalar lock
+pointer and its paired count pointer retain distinct roles. Frontend compilation
+and CPU interpretation
 check the same algorithm, including accumulation when multiple rows share a
 group. The final DW/DB reduction kernel is a separate next stage: partial
 buffers are *not* final weight/bias gradients. Host allocation and shape
 contracts are checked, but static types do not prove atomics, lock release,
-or that saved mean/rstd values belong to X. Grouped scratch and lock pointer
-roles currently reuse v0 stub types; their generalized shape-and-stride
-representation remains open.
+or that saved mean/rstd values belong to X. The lock array's `2 * Groups`
+length is enforced by `checked_group_locks` at runtime; Pyrefly does not infer
+it from the generic pointer arithmetic. Older example-specific row/scratch
+classes still exist in unrelated portions of the copied v0 overlay.
 
 `test_attention_forward.py` retains the executable bodies of Triton's tutorial
 06 descriptor-based forward kernel and its two JIT helpers. The signature

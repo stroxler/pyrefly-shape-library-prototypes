@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import unittest
-from typing import TYPE_CHECKING, assert_type
+from typing import TYPE_CHECKING, Any, assert_type, cast
 
 import torch
 import triton.language as tl
@@ -26,7 +26,6 @@ Rows = IntVar("Rows")
 Cols = IntVar("Cols")
 Stride = IntVar("Stride")
 Groups = IntVar("Groups")
-Capacity = IntVar("Capacity")
 Block = IntVar("Block")
 
 
@@ -34,13 +33,13 @@ Block = IntVar("Block")
 def _layer_norm_bwd_dx_fused(
     DX: tlt.OutPointer[[Rows, Cols], [Stride, 1]],
     DY: tlt.InPointer[[Rows, Cols], [Stride, 1]],
-    DW: tl.GroupedScratchPointer[Groups, Cols, Block],
-    DB: tl.GroupedScratchPointer[Groups, Cols, Block],
+    DW: tlt.InOutPointer[[Groups, Cols], [Cols, 1]],
+    DB: tlt.InOutPointer[[Groups, Cols], [Cols, 1]],
     X: tlt.InPointer[[Rows, Cols], [Stride, 1]],
     W: tlt.InPointer[[Cols], [1]],
     Mean: tlt.InPointer[[Rows], [1]],
     Rstd: tlt.InPointer[[Rows], [1]],
-    Lock: tl.LockArrayPointer[Groups, Capacity],
+    Lock: tl.LockArrayPointer[Groups, int],
     stride: Int[Stride],
     N: Int[Cols],
     GROUP_SIZE_M: ConstExpr[Int[Groups]],
@@ -56,8 +55,9 @@ def _layer_norm_bwd_dx_fused(
     dx_row = DX + row * stride
     # Offset locks and weights/biases gradient pointer for parallel reduction
     lock_id = row % GROUP_SIZE_M
-    Lock += lock_id
-    Count = Lock + GROUP_SIZE_M
+    # Upstream rebinds Lock with +=; the selected lock is a scalar pointer.
+    lock_ptr = Lock + lock_id
+    Count = lock_ptr + GROUP_SIZE_M
     # Upstream rebinds DW and DB; these names distinguish scratch tiles.
     dw_ptrs = DW + lock_id * N + cols
     db_ptrs = DB + lock_id * N + cols
@@ -80,7 +80,7 @@ def _layer_norm_bwd_dx_fused(
     # Accumulate partial sums for dw/db
     partial_dw = (dy * xhat).to(w.dtype)
     partial_db = (dy).to(w.dtype)
-    while tl.atomic_cas(Lock, 0, 1) == 1:
+    while tl.atomic_cas(lock_ptr, 0, 1) == 1:
         pass
     count = tl.load(Count)
     # First store doesn't accumulate
@@ -97,7 +97,7 @@ def _layer_norm_bwd_dx_fused(
     tl.debug_barrier()
 
     # Release the lock
-    tl.atomic_xchg(Lock, 0)
+    tl.atomic_xchg(lock_ptr, 0)
 
 
 def layer_norm_backward_partials[Rows: IntVar, Cols: IntVar, Stride: IntVar](
@@ -187,6 +187,13 @@ def layer_norm_backward_partials[Rows: IntVar, Cols: IntVar, Stride: IntVar](
 class LayerNormBackwardTest(unittest.TestCase):
     """Check host boundary and compile the unchanged lock-based kernel."""
 
+    def test_reject_wrong_scratch_and_locks(self) -> None:
+        # An untyped caller still needs the runtime allocation check.
+        with self.assertRaisesRegex(ValueError, "Grouped scratch"):
+            checked_grouped_scratch(cast(Any, torch.empty((2, 6))), 2, 7, 8)
+        with self.assertRaisesRegex(ValueError, "zero-initialized"):
+            checked_group_locks(torch.ones((4,), dtype=torch.int32), 2)
+
     def test_reject_wrong_statistics(self) -> None:
         x = as_host_tensor(torch.ones((2, 7)))
         w = as_host_tensor(torch.ones(7))
@@ -268,6 +275,33 @@ class LayerNormBackwardTest(unittest.TestCase):
 
 
 if TYPE_CHECKING:
+
+    def typed_pointer_selection[
+        Groups: IntVar, Cols: IntVar, Block: IntVar, Other: IntVar
+    ](
+        scratch: tlt.InOutPointer[[Groups, Cols], [Cols, 1]],
+        locks: tl.LockArrayPointer[Groups, int],
+        group: tl.GroupIndex[Groups],
+        n: Int[Cols],
+        group_size: Int[Groups],
+        columns: tl.Offsets[[Block]],
+        mask: tl.Mask[[Cols], [Block]],
+        wrong_mask: tl.Mask[[Other], [Block]],
+        values: tl.tensor[[Block]],
+    ) -> None:
+        row_ptr = scratch + group * n
+        assert_type(row_ptr, tlt.InOutPointer[[Cols], [1]])
+        tile_ptrs = row_ptr + columns
+        assert_type(tile_ptrs, tl.InOutTilePointers[[Cols], [1], [Block]])
+        assert_type(tl.load(tile_ptrs, mask=mask), tl.tensor[[Block]])
+        tl.load(tile_ptrs, mask=wrong_mask)  # pyrefly: ignore[no-matching-overload]
+        tl.store(tile_ptrs, values, mask=mask)
+        tl.store(  # pyrefly: ignore[no-matching-overload]
+            tile_ptrs, values, mask=wrong_mask
+        )
+        lock_ptr = locks + group
+        assert_type(lock_ptr, tl.LockSlotPointer[Groups])
+        assert_type(lock_ptr + group_size, tl.CountPointer[Groups])
 
     def typed_boundary[Rows: IntVar, Cols: IntVar, Stride: IntVar, Other: IntVar](
         x: host_tensor.Tensor[[Rows, Cols], [Stride, 1]],

@@ -132,7 +132,7 @@ def checked_grouped_scratch[Groups: IntVar, Cols: IntVar, Block: IntVar](
     groups: Int[Groups],
     cols: Int[Cols],
     block: Int[Block],
-) -> tl.GroupedScratchPointer[Groups, Cols, Block]:
+) -> tlt.InOutPointer[[Groups, Cols], [Cols, 1]]:
     """Validate a contiguous grouped reduction scratch allocation."""
     if (
         tensor.ndim != 2
@@ -143,7 +143,7 @@ def checked_grouped_scratch[Groups: IntVar, Cols: IntVar, Block: IntVar](
         or block < cols
     ):
         raise ValueError("Grouped scratch must match the reduction groups and columns")
-    return cast("tl.GroupedScratchPointer[Groups, Cols, Block]", tensor)
+    return cast("tlt.InOutPointer[[Groups, Cols], [Cols, 1]]", tensor)
 
 
 def checked_group_locks[Groups: IntVar](
