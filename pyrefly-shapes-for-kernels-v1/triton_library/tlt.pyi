@@ -18,19 +18,6 @@ class InPointer[Target: IntTuple, Strides: IntTuple]:
         offsets: tl.Offsets[Tile, Stride, Origin, GridAxis],
     ) -> tl.InTilePointers[[Length], [Stride], Tile, Origin, GridAxis]: ...
     @overload
-    def __add__[
-        Rows: IntVar,
-        Cols: IntVar,
-        Stride: IntVar,
-        ColumnStride: IntVar,
-        Tile: IntTuple,
-        Origin: str,
-        GridAxis: int,
-    ](
-        self: SelectedInRow[Rows, Cols, Stride, ColumnStride],
-        offsets: tl.Offsets[Tile, ColumnStride, Origin, GridAxis],
-    ) -> tl.InTilePointers[[Cols], [ColumnStride], Tile, Origin, GridAxis]: ...
-    @overload
     def __add__[Cols: IntVar, BC: IntVar](
         self: InPointer[[Cols], [1]], offsets: tl.ColumnAxisOffsets[[BC], 1]
     ) -> tl.InColumnTilePointers[Cols, BC]: ...
@@ -88,21 +75,6 @@ class InPointer[Target: IntTuple, Strides: IntTuple]:
         [TileRows, TileCols],
         Literal["wrapped_1"],
     ]: ...
-    def __iadd__[
-        Rows: IntVar,
-        Cols: IntVar,
-        Stride: IntVar,
-        ColumnStride: IntVar,
-        GridAxis: int,
-    ](
-        self: InPointer[[Rows, Cols], [Stride, ColumnStride]],
-        offset: tl.TileStart[[Stride], GridAxis],
-    ) -> SelectedInRow[Rows, Cols, Stride, ColumnStride]: ...
-
-class SelectedInRow[
-    Rows: IntVar, Cols: IntVar, Stride: IntVar, ColumnStride: IntVar
-](InPointer[[Rows, Cols], [Stride, ColumnStride]]): ...
-
 class OutPointer[Target: IntTuple, Strides: IntTuple]:
     @overload
     def __add__[GridAxis: int](
@@ -115,19 +87,6 @@ class OutPointer[Target: IntTuple, Strides: IntTuple]:
         self: OutPointer[[Length], [Stride]],
         offsets: tl.Offsets[Tile, Stride, Origin, GridAxis],
     ) -> tl.OutTilePointers[[Length], [Stride], Tile, Origin, GridAxis]: ...
-    @overload
-    def __add__[
-        Rows: IntVar,
-        Cols: IntVar,
-        Stride: IntVar,
-        ColumnStride: IntVar,
-        Tile: IntTuple,
-        Origin: str,
-        GridAxis: int,
-    ](
-        self: SelectedOutRow[Rows, Cols, Stride, ColumnStride],
-        offsets: tl.Offsets[Tile, ColumnStride, Origin, GridAxis],
-    ) -> tl.OutTilePointers[[Cols], [ColumnStride], Tile, Origin, GridAxis]: ...
     @overload
     def __add__[
         Rows: IntVar,
@@ -157,17 +116,3 @@ class OutPointer[Target: IntTuple, Strides: IntTuple]:
     ) -> tl.OutTilePointers[
         [Rows, Cols], [RowStride, ColStride], [TileRows, 1], Literal["axis_0"]
     ]: ...
-    def __iadd__[
-        Rows: IntVar,
-        Cols: IntVar,
-        Stride: IntVar,
-        ColumnStride: IntVar,
-        GridAxis: int,
-    ](
-        self: OutPointer[[Rows, Cols], [Stride, ColumnStride]],
-        offset: tl.TileStart[[Stride], GridAxis],
-    ) -> SelectedOutRow[Rows, Cols, Stride, ColumnStride]: ...
-
-class SelectedOutRow[
-    Rows: IntVar, Cols: IntVar, Stride: IntVar, ColumnStride: IntVar
-](OutPointer[[Rows, Cols], [Stride, ColumnStride]]): ...

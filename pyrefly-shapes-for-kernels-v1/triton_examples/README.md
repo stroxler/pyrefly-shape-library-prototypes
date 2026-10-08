@@ -1,5 +1,23 @@
 # Triton examples
 
+`test_layer_norm_backward.py` retains Triton's fused backward input-gradient
+algorithm. It names selected input/output rows and scratch tiles separately
+instead of rebinding the upstream pointer parameters; comments mark both
+departures. It writes DX and grouped partial weight/bias gradients, so the
+checked host call explicitly allocates `[Groups, Cols]` scratch buffers and
+zero-initialized `[2 * Groups]` lock/count storage. The output layout checks
+one program per row, shared row strides, the column count and block width,
+and the group-size launch argument. `checked_grouped_scratch` and
+`checked_group_locks` validate the extra allocations before presenting the
+stub-only pointer roles at launch. Frontend compilation and CPU interpretation
+check the same algorithm, including accumulation when multiple rows share a
+group. The final DW/DB reduction kernel is a separate next stage: partial
+buffers are *not* final weight/bias gradients. Host allocation and shape
+contracts are checked, but static types do not prove atomics, lock release,
+or that saved mean/rstd values belong to X. Grouped scratch and lock pointer
+roles currently reuse v0 stub types; their generalized shape-and-stride
+representation remains open.
+
 `test_attention_forward.py` retains the executable bodies of Triton's tutorial
 06 descriptor-based forward kernel and its two JIT helpers. The signature
 annotations use legacy-style global `IntVar`s because Triton's JIT source
@@ -26,28 +44,30 @@ FP8/warp-specialized paths (reshape/join and transposed dot); the v1 stubs
 cannot prove those paths. Program-ID arithmetic and descriptor offsets still
 need a proof of full grid coverage, not just a checked host grid size.
 
-`test_layer_norm.py` preserves the forward kernel body from Triton's
-`python/tutorials/05-layer-norm.py` (the backward kernels remain in v0). The
+`test_layer_norm.py` preserves the forward kernel algorithm from Triton's
+`python/tutorials/05-layer-norm.py`. Its selected input and output row pointers
+use fresh local names instead of the upstream `+=` parameter rebindings, as
+documented beside those lines. The
 checked Torch boundary ties input and output to the same `[Rows, Cols]` and
 element strides `[Stride, 1]`, weight and bias to `[Cols]`, and mean and
 inverse standard deviation to `[Rows]`. Its output allocation deliberately
-preserves padded input rows: the unchanged kernel takes **one shared** `stride`
+preserves padded input rows: the kernel takes **one shared** `stride`
 for input and output. `row_output` launches exactly one program per row and
 checks that `N`, `stride`, and `BLOCK_SIZE` match the host allocation and
 metadata. The block width may be smaller than the column count because the
 body loops over successive column blocks. CPU interpretation checks a 5×7
 input with row stride 11 and block width 4 against Torch layer norm; the
-unchanged frontend body also compiles to TTIR.
+same algorithm also compiles to TTIR.
 
-For the unchanged `X += row * stride` and `Y += row * stride` statements,
-Pyrefly retains selected-row subtypes of the annotated matrix pointers.
-Only those subtypes, or a lower-rank pointer produced by `+ row * stride`,
-accept 1D column offsets. A type-only negative fixture rejects unshifted
-matrix pointers plus columns, while the original layer-norm body type-checks.
-This checks row selection and declared row stride, but does **not** prove
+The `x_row = X + row * stride` and `y_row = Y + row * stride` expressions
+produce ordinary 1D allocation pointers; there are no selected-row subtypes.
+Only those lower-rank pointers accept 1D column offsets. A type-only negative
+fixture rejects unshifted matrix pointers plus columns, while the adapted
+layer-norm body type-checks. This checks row selection and declared row stride,
+but does **not** prove
 that the row index lies inside `Rows`, that all rows are visited, or that the
-mask protects every address. Repeating a correctly strided shift still
-produces a selected-row subtype, even if the pointer then leaves the array.
+mask protects every address. It does not prove row-index bounds or prevent
+reusing the original matrix pointer to select a second row.
 The checked host shape/stride boundary and
 launch metadata remain stronger guarantees than this local analysis. The
 scalar statistics add a second boundary pattern beyond previous

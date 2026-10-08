@@ -89,6 +89,7 @@ class RowOutputLayout[Shape: IntTuple]:
     column_parameter: str
     stride_parameter: str
     block_parameter: str
+    metadata: tuple[tuple[str, int], ...] = ()
 
     @property
     def grid(self) -> tuple[int]:
@@ -106,7 +107,7 @@ class RowOutputLayout[Shape: IntTuple]:
             (self.column_parameter, self.cols),
             (self.stride_parameter, self.stride),
             (self.block_parameter, self.block_width),
-        )
+        ) + self.metadata
         return _launch_checked(kernel, self.grid, expected, *args, **kwargs)
 
 
@@ -192,6 +193,7 @@ def row_output[Rows: IntVar, Cols: IntVar, StrideRows: IntVar, StrideCols: IntVa
     stride_parameter: str,
     block_parameter: str,
     block_width: int,
+    metadata: Mapping[str, int] | None = None,
 ) -> RowOutputLayout[[Rows, Cols]]:
     """Check the host row layout and the legal Triton loop width."""
     if output.ndim != 2 or min(output.shape) <= 0:
@@ -206,7 +208,8 @@ def row_output[Rows: IntVar, Cols: IntVar, StrideRows: IntVar, StrideCols: IntVa
         or block_width & (block_width - 1)
     ):
         raise ValueError("Block width must be a positive power of two")
-    if len({column_parameter, stride_parameter, block_parameter}) != 3:
+    names = {column_parameter, stride_parameter, block_parameter, *(metadata or {})}
+    if len(names) != 3 + len(metadata or {}):
         raise ValueError("Launch argument names must be distinct")
     return RowOutputLayout(
         rows,
@@ -216,6 +219,7 @@ def row_output[Rows: IntVar, Cols: IntVar, StrideRows: IntVar, StrideCols: IntVa
         column_parameter,
         stride_parameter,
         block_parameter,
+        tuple((metadata or {}).items()),
     )
 
 

@@ -1,0 +1,293 @@
+"""Check Triton's layer-norm backward partials and their scratch allocations."""
+
+from __future__ import annotations
+
+import os
+import unittest
+from typing import TYPE_CHECKING, assert_type
+
+import torch
+import triton.language as tl
+from shape_extensions import Int, IntVar
+
+from triton_examples.testing import compile_ttir
+from triton_library import host_tensor, tlt
+from triton_library.launch_layout import row_output
+from triton_library.semantic_jit import ConstExpr, semantic_jit
+from triton_library.torch_views import (
+    as_host_tensor,
+    checked_group_locks,
+    checked_grouped_scratch,
+    checked_matrix,
+    checked_vector,
+)
+
+Rows = IntVar("Rows")
+Cols = IntVar("Cols")
+Stride = IntVar("Stride")
+Groups = IntVar("Groups")
+Capacity = IntVar("Capacity")
+Block = IntVar("Block")
+
+
+@semantic_jit
+def _layer_norm_bwd_dx_fused(
+    DX: tlt.OutPointer[[Rows, Cols], [Stride, 1]],
+    DY: tlt.InPointer[[Rows, Cols], [Stride, 1]],
+    DW: tl.GroupedScratchPointer[Groups, Cols, Block],
+    DB: tl.GroupedScratchPointer[Groups, Cols, Block],
+    X: tlt.InPointer[[Rows, Cols], [Stride, 1]],
+    W: tlt.InPointer[[Cols], [1]],
+    Mean: tlt.InPointer[[Rows], [1]],
+    Rstd: tlt.InPointer[[Rows], [1]],
+    Lock: tl.LockArrayPointer[Groups, Capacity],
+    stride: Int[Stride],
+    N: Int[Cols],
+    GROUP_SIZE_M: ConstExpr[Int[Groups]],
+    BLOCK_SIZE_N: ConstExpr[Int[Block]],
+):
+    # Map the program id to the elements of X, DX, and DY it should compute.
+    row = tl.program_id(0)
+    cols = tl.arange(0, BLOCK_SIZE_N)
+    mask = cols < N
+    # Upstream rebinds X, DY, and DX with +=; fresh names expose 1D row types.
+    x_row = X + row * stride
+    dy_row = DY + row * stride
+    dx_row = DX + row * stride
+    # Offset locks and weights/biases gradient pointer for parallel reduction
+    lock_id = row % GROUP_SIZE_M
+    Lock += lock_id
+    Count = Lock + GROUP_SIZE_M
+    # Upstream rebinds DW and DB; these names distinguish scratch tiles.
+    dw_ptrs = DW + lock_id * N + cols
+    db_ptrs = DB + lock_id * N + cols
+    # Load data to SRAM
+    x = tl.load(x_row + cols, mask=mask, other=0).to(tl.float32)
+    dy = tl.load(dy_row + cols, mask=mask, other=0).to(tl.float32)
+    w = tl.load(W + cols, mask=mask).to(tl.float32)
+    mean = tl.load(Mean + row)
+    rstd = tl.load(Rstd + row)
+    # Compute dx
+    xhat = (x - mean) * rstd
+    wdy = w * dy
+    xhat = tl.where(mask, xhat, 0.0)
+    wdy = tl.where(mask, wdy, 0.0)
+    c1 = tl.sum(xhat * wdy, axis=0) / N
+    c2 = tl.sum(wdy, axis=0) / N
+    dx = (wdy - (xhat * c1 + c2)) * rstd
+    # Write dx
+    tl.store(dx_row + cols, dx, mask=mask)
+    # Accumulate partial sums for dw/db
+    partial_dw = (dy * xhat).to(w.dtype)
+    partial_db = (dy).to(w.dtype)
+    while tl.atomic_cas(Lock, 0, 1) == 1:
+        pass
+    count = tl.load(Count)
+    # First store doesn't accumulate
+    if count == 0:
+        tl.atomic_xchg(Count, 1)
+    else:
+        partial_dw += tl.load(dw_ptrs, mask=mask)
+        partial_db += tl.load(db_ptrs, mask=mask)
+    tl.store(dw_ptrs, partial_dw, mask=mask)
+    tl.store(db_ptrs, partial_db, mask=mask)
+
+    # need a barrier to ensure all threads finished before
+    # releasing the lock
+    tl.debug_barrier()
+
+    # Release the lock
+    tl.atomic_xchg(Lock, 0)
+
+
+def layer_norm_backward_partials[Rows: IntVar, Cols: IntVar, Stride: IntVar](
+    x: host_tensor.Tensor[[Rows, Cols], [Stride, 1]],
+    dy: host_tensor.Tensor[[Rows, Cols], [Stride, 1]],
+    weight: host_tensor.Tensor[[Cols], [1]],
+    mean: host_tensor.Tensor[[Rows], [1]],
+    rstd: host_tensor.Tensor[[Rows], [1]],
+    *,
+    block_size: int,
+    group_size: int,
+) -> tuple[torch.Tensor[[Rows, Cols]], torch.Tensor, torch.Tensor]:
+    """Validate saved statistics and allocate DX, grouped partials, and locks."""
+    x_ptr, stride, rows, cols = checked_matrix(
+        x, tlt.InPointer[[Rows, Cols], [Stride, 1]]
+    )
+    dy_ptr, dy_stride, dy_rows, dy_cols = checked_matrix(
+        dy, tlt.InPointer[[Rows, Cols], [Stride, 1]]
+    )
+    w_ptr, w_cols = checked_vector(weight, tlt.InPointer[[Cols], [1]])
+    mean_ptr, mean_rows = checked_vector(mean, tlt.InPointer[[Rows], [1]])
+    rstd_ptr, rstd_rows = checked_vector(rstd, tlt.InPointer[[Rows], [1]])
+    if (
+        (dy_stride, dy_rows, dy_cols) != (stride, rows, cols)
+        or w_cols != cols
+        or mean_rows != rows
+        or rstd_rows != rows
+        or any(t.device != x.device for t in (dy, weight, mean, rstd))
+    ):
+        raise ValueError(
+            "Backward inputs must have matching shapes, strides, and devices"
+        )
+    if (
+        x.dtype != torch.float32
+        or dy.dtype != x.dtype
+        or weight.dtype != x.dtype
+        or mean.dtype != torch.float32
+        or rstd.dtype != torch.float32
+    ):
+        raise ValueError("Backward inputs currently require float32 dtype")
+    if type(group_size) is not int or not 1 <= group_size <= rows:
+        raise ValueError("group_size must be between one and the number of rows")
+    if (
+        type(block_size) is not int
+        or block_size < cols
+        or block_size & (block_size - 1)
+    ):
+        raise ValueError("block_size must be a power of two covering all columns")
+    dx = torch.empty_strided((rows, cols), (stride, 1), dtype=x.dtype, device=x.device)
+    dw_partial = torch.empty((group_size, cols), dtype=x.dtype, device=x.device)
+    db_partial = torch.empty_like(dw_partial)
+    locks = torch.zeros((2 * group_size,), dtype=torch.int32, device=x.device)
+    dw_ptr = checked_grouped_scratch(dw_partial, group_size, cols, block_size)
+    db_ptr = checked_grouped_scratch(db_partial, group_size, cols, block_size)
+    lock_ptr = checked_group_locks(locks, group_size)
+    dx_view = as_host_tensor(dx, host_tensor.Tensor[[Rows, Cols], [Stride, 1]])
+    dx_ptr, _, _, _ = checked_matrix(
+        dx_view, tlt.OutPointer[[Rows, Cols], [Stride, 1]]
+    )
+    layout = row_output(
+        dx_view,
+        column_parameter="N",
+        stride_parameter="stride",
+        block_parameter="BLOCK_SIZE_N",
+        block_width=block_size,
+        metadata={"GROUP_SIZE_M": group_size},
+    )
+    layout.launch(
+        _layer_norm_bwd_dx_fused,
+        dx_ptr,
+        dy_ptr,
+        dw_ptr,
+        db_ptr,
+        x_ptr,
+        w_ptr,
+        mean_ptr,
+        rstd_ptr,
+        lock_ptr,
+        stride,
+        cols,
+        group_size,
+        block_size,
+    )
+    return dx, dw_partial, db_partial
+
+
+class LayerNormBackwardTest(unittest.TestCase):
+    """Check host boundary and compile the unchanged lock-based kernel."""
+
+    def test_reject_wrong_statistics(self) -> None:
+        x = as_host_tensor(torch.ones((2, 7)))
+        w = as_host_tensor(torch.ones(7))
+        wrong = as_host_tensor(torch.ones(7))
+        with self.assertRaisesRegex(ValueError, "matching shapes"):
+            layer_norm_backward_partials(
+                x,
+                x,
+                w,
+                wrong,  # pyrefly: ignore[bad-argument-type]
+                wrong,  # pyrefly: ignore[bad-argument-type]
+                block_size=8,
+                group_size=2,
+            )
+
+    def test_frontend(self) -> None:
+        if os.environ.get("TRITON_INTERPRET") == "1":
+            self.skipTest("Frontend compilation runs in normal JIT mode")
+        ir = compile_ttir(
+            _layer_norm_bwd_dx_fused,
+            signature={
+                name: "*fp32"
+                for name in ("DX", "DY", "DW", "DB", "X", "W", "Mean", "Rstd")
+            }
+            | {"Lock": "*i32", "stride": "i32", "N": "i32"},
+            constexprs={"GROUP_SIZE_M": 2, "BLOCK_SIZE_N": 8},
+        )
+        self.assertIn("tt.func", ir)
+
+    def test_partial_gradients(self) -> None:
+        if os.environ.get("TRITON_INTERPRET") != "1":
+            self.skipTest("CPU launches use interpreter mode")
+        x = torch.arange(22, dtype=torch.float32).reshape(2, 11)[:, :7]
+        dy = torch.linspace(0.1, 1.4, 14).reshape(2, 7)
+        dy = torch.nn.functional.pad(dy, (0, 4))[:, :7]
+        weight = torch.linspace(0.5, 1.5, 7)
+        mean = x.mean(dim=1)
+        rstd = torch.rsqrt(((x - mean[:, None]) ** 2).mean(dim=1) + 1e-5)
+        dx, dw, db = layer_norm_backward_partials(
+            as_host_tensor(x),
+            as_host_tensor(dy),
+            as_host_tensor(weight),
+            as_host_tensor(mean),
+            as_host_tensor(rstd),
+            block_size=8,
+            group_size=2,
+        )
+        xhat = (x - mean[:, None]) * rstd[:, None]
+        wdy = dy * weight
+        expected = (
+            wdy - xhat * (xhat * wdy).mean(1, keepdim=True) - wdy.mean(1, keepdim=True)
+        ) * rstd[:, None]
+        torch.testing.assert_close(dx, expected)
+        torch.testing.assert_close(dw, dy * xhat)
+        torch.testing.assert_close(db, dy)
+
+    def test_multiple_rows_share_a_scratch_group(self) -> None:
+        if os.environ.get("TRITON_INTERPRET") != "1":
+            self.skipTest("CPU launches use interpreter mode")
+        x = torch.arange(21, dtype=torch.float32).reshape(3, 7)
+        dy = torch.linspace(0.1, 2.1, 21).reshape(3, 7)
+        weight = torch.linspace(0.5, 1.5, 7)
+        mean = x.mean(dim=1)
+        rstd = torch.rsqrt(((x - mean[:, None]) ** 2).mean(dim=1) + 1e-5)
+        _, dw, db = layer_norm_backward_partials(
+            as_host_tensor(x),
+            as_host_tensor(dy),
+            as_host_tensor(weight),
+            as_host_tensor(mean),
+            as_host_tensor(rstd),
+            block_size=8,
+            group_size=2,
+        )
+        contributions = dy * (x - mean[:, None]) * rstd[:, None]
+        torch.testing.assert_close(
+            dw, torch.stack((contributions[0] + contributions[2], contributions[1]))
+        )
+        torch.testing.assert_close(db, torch.stack((dy[0] + dy[2], dy[1])))
+
+
+if TYPE_CHECKING:
+
+    def typed_boundary[Rows: IntVar, Cols: IntVar, Stride: IntVar, Other: IntVar](
+        x: host_tensor.Tensor[[Rows, Cols], [Stride, 1]],
+        dy: host_tensor.Tensor[[Rows, Cols], [Stride, 1]],
+        weight: host_tensor.Tensor[[Cols], [1]],
+        stats: host_tensor.Tensor[[Rows], [1]],
+        wrong: host_tensor.Tensor[[Other], [1]],
+    ) -> None:
+        assert_type(
+            layer_norm_backward_partials(
+                x, dy, weight, stats, stats, block_size=8, group_size=2
+            ),
+            tuple[torch.Tensor[[Rows, Cols]], torch.Tensor, torch.Tensor],
+        )
+        layer_norm_backward_partials(
+            x,
+            dy,
+            wrong,  # pyrefly: ignore[bad-argument-type]
+            stats,
+            stats,
+            block_size=8,
+            group_size=2,
+        )

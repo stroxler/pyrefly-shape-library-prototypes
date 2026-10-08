@@ -14,7 +14,9 @@ tracks the host dimension and block width of each lambda parameter. The
 Ref-typed kernel and build actual Pallas `BlockSpec` objects. `row_layout`
 models an empty-grid, full-row kernel using Pallas's default input/output
 specs. `row_statistics_layout` supports multiple outputs, and
-`attention_layout` binds query, key/value, and statistics axes. Each factory
+`attention_layout` binds query, key/value, and statistics axes, while
+`row_input_gradient_layout` binds saved scalar statistics and input gradients.
+Each factory
 produces a `Layout` with a typed host input/output signature.
 
 The factories use `InputBinding` and `OutputBinding` to assemble their runtime

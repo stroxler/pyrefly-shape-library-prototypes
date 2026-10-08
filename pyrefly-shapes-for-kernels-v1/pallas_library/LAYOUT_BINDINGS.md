@@ -15,6 +15,7 @@ Ref, whereas `block = —` means Pallas's default full-array Ref and no
 | Seeded dropout | `x: I((length,); (T,); (i) → (i,))` (seed is captured by the kernel closure) | `out: O((length,); (T,); (i) → (i,))` | `G(out, length, T)` |
 | Masked softmax | `row: I((cols,); —; —)` | `row: O((cols,); —; —)` | Empty: `vmap` supplies the outer rows |
 | Layer norm | `row, weight, bias: I((features,); —; —)` | `row: O((features,); —; —)`, `mean, rstd: O((); —; —)` | Empty: `vmap` supplies the outer rows |
+| Layer-norm input gradient | `x, weight, bias, dout: I((features,); —; —)`; saved `mean, rstd: I((); —; —)` | `dx: O((features,); —; —)` | Empty: one row per call |
 | Blocked matmul | `a: I((rows, inner); (RM, K); (i,j) → (i,0))`, `b: I((inner, cols); (K, CN); (i,j) → (0,j))` | `c: O((rows, cols); (RM, CN); (i,j) → (i,j))` | `G(c, rows, RM, exact=True)`, `G(c, cols, CN, exact=True)` |
 | Forward attention | `q: I((batch,queries,heads,dim); (None,BQ,None,D); (i,j,h) → (j,i,h,0))`, `k,v: I((batch,keys,heads,dim); (None,K,None,D); (i,j,h) → (j,0,h,0))` | `out: O((batch,queries,heads,dim); (None,BQ,None,D); (i,j,h) → (j,i,h,0))`, `lse: O((batch,heads,queries); (None,None,BQ); (i,j,h) → (j,h,i))` | `G(out, queries, BQ, exact=True)`, `G(out, batch, 1)`, `G(out, heads, 1)` |
 

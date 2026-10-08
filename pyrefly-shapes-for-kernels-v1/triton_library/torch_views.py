@@ -127,6 +127,41 @@ def checked_matrix(
     return tensor, tensor.stride(0), rows, cols
 
 
+def checked_grouped_scratch[Groups: IntVar, Cols: IntVar, Block: IntVar](
+    tensor: torch.Tensor[[Groups, Cols]],
+    groups: Int[Groups],
+    cols: Int[Cols],
+    block: Int[Block],
+) -> tl.GroupedScratchPointer[Groups, Cols, Block]:
+    """Validate a contiguous grouped reduction scratch allocation."""
+    if (
+        tensor.ndim != 2
+        or tensor.shape != (groups, cols)
+        or not tensor.is_contiguous()
+        or tensor.dtype != torch.float32
+        or type(block) is not int
+        or block < cols
+    ):
+        raise ValueError("Grouped scratch must match the reduction groups and columns")
+    return cast("tl.GroupedScratchPointer[Groups, Cols, Block]", tensor)
+
+
+def checked_group_locks[Groups: IntVar](
+    tensor: torch.Tensor,
+    groups: Int[Groups],
+) -> tl.LockArrayPointer[Groups, int]:
+    """Validate zero-initialized lock and count arrays for grouped reduction."""
+    if (
+        tensor.ndim != 1
+        or tensor.shape != (2 * groups,)
+        or not tensor.is_contiguous()
+        or tensor.dtype != torch.int32
+        or bool(torch.any(tensor != 0))
+    ):
+        raise ValueError("Grouped locks require two zero-initialized int32 sections")
+    return cast("tl.LockArrayPointer[Groups, int]", tensor)
+
+
 def _validate_view(
     tensor: torch.Tensor, view_type: object, kinds: tuple[type, ...]
 ) -> None:

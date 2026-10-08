@@ -224,6 +224,48 @@ def row_statistics_layout[Features: IntVar](
     )
 
 
+def row_input_gradient_layout[Features: IntVar](
+    kernel: Callable[
+        [
+            pl.InRef[[Features]],
+            pl.InRef[[Features]],
+            pl.InRef[[Features]],
+            pl.InRef[[Features]],
+            pl.InRef[[]],
+            pl.InRef[[]],
+            pl.OutRef[[Features]],
+        ],
+        None,
+    ],
+    *,
+    out_shape: jax.ShapeDtypeStruct[[Features]],
+) -> Layout[
+    [
+        jax.Array[[Features]],
+        jax.Array[[Features]],
+        jax.Array[[Features]],
+        jax.Array[[Features]],
+        jax.Array[[]],
+        jax.Array[[]],
+    ],
+    jax.Array[[Features]],
+]:
+    """Bind four full rows and two saved scalar statistics to one gradient row."""
+    (features,) = out_shape.shape
+    if type(features) is not int or features <= 0:
+        raise ValueError("Expected a nonempty output row")
+    scalar = jax.ShapeDtypeStruct((), out_shape.dtype)
+    return cast(
+        Any,
+        binding_layout(
+            kernel,
+            inputs=(InputBinding(out_shape, ("features",)),) * 4
+            + (InputBinding(scalar, ()),) * 2,
+            outputs=(OutputBinding(out_shape, ("features",)),),
+        ),
+    )
+
+
 def attention_layout[
     Batch: IntVar,
     Queries: IntVar,

@@ -1,5 +1,14 @@
 # Pallas examples
 
+`test_layer_norm_backward.py` keeps JAX's GPU layer-norm input-gradient
+kernel body unchanged. A typed `row_input_gradient_layout` relates four
+same-length input rows, two saved scalar statistics, and a same-length output
+gradient, using the empty grid and Pallas's full-row Refs. The CPU interpreter
+checks a partial final block against the independent layer-norm derivative.
+The wrapper validates input shapes and dtypes at launch; it does not prove
+that saved mean and reciprocal standard deviation were computed from this
+particular input. Pallas's weight-gradient kernel remains a separate example.
+
 `test_attention_forward.py` retains JAX's deprecated GPU `mha_forward_kernel`
 and the optional segment-mask helper unchanged, but exercises the noncausal,
 unsegmented branch. `attention_layout` relates Q `[B,Q,H,D]`, K/V `[B,K,H,D]`,

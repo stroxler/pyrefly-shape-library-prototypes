@@ -35,21 +35,22 @@ def _layer_norm_fwd_fused(
 ):
     # Map the program id to the row of X and Y it should compute.
     row = tl.program_id(0)
-    Y += row * stride
-    X += row * stride
+    # Upstream rebinds Y and X with +=; fresh names expose their 1D row types.
+    y_row = Y + row * stride
+    x_row = X + row * stride
     # Compute mean
     mean = 0
     _mean = tl.zeros([BLOCK_SIZE], dtype=tl.float32)
     for off in range(0, N, BLOCK_SIZE):
         cols = off + tl.arange(0, BLOCK_SIZE)
-        a = tl.load(X + cols, mask=cols < N, other=0.0).to(tl.float32)
+        a = tl.load(x_row + cols, mask=cols < N, other=0.0).to(tl.float32)
         _mean += a
     mean = tl.sum(_mean, axis=0) / N
     # Compute variance
     _var = tl.zeros([BLOCK_SIZE], dtype=tl.float32)
     for off in range(0, N, BLOCK_SIZE):
         cols = off + tl.arange(0, BLOCK_SIZE)
-        x = tl.load(X + cols, mask=cols < N, other=0.0).to(tl.float32)
+        x = tl.load(x_row + cols, mask=cols < N, other=0.0).to(tl.float32)
         x = tl.where(cols < N, x - mean, 0.0)
         _var += x * x
     var = tl.sum(_var, axis=0) / N
@@ -63,11 +64,11 @@ def _layer_norm_fwd_fused(
         mask = cols < N
         w = tl.load(W + cols, mask=mask)
         b = tl.load(B + cols, mask=mask)
-        x = tl.load(X + cols, mask=mask, other=0.0).to(tl.float32)
+        x = tl.load(x_row + cols, mask=mask, other=0.0).to(tl.float32)
         x_hat = (x - mean) * rstd
         y = x_hat * w + b
         # Write output
-        tl.store(Y + cols, y, mask=mask)
+        tl.store(y_row + cols, y, mask=mask)
 
 
 def layer_norm[Rows: IntVar, Cols: IntVar, Stride: IntVar](
@@ -221,12 +222,12 @@ if TYPE_CHECKING:
         input_ptr + columns  # pyrefly: ignore[unsupported-operation]
         output_ptr + columns  # pyrefly: ignore[unsupported-operation]
         row_offset = tl.program_id(0) * stride
-        input_ptr += row_offset
-        output_ptr += row_offset
-        assert_type(input_ptr, tlt.SelectedInRow[Rows, Cols, Stride, 1])
-        assert_type(output_ptr, tlt.SelectedOutRow[Rows, Cols, Stride, 1])
-        assert_type(input_ptr + columns, tl.InTilePointers[[Cols], [1], [Tile]])
-        assert_type(output_ptr + columns, tl.OutTilePointers[[Cols], [1], [Tile]])
+        input_row = input_ptr + row_offset
+        output_row = output_ptr + row_offset
+        assert_type(input_row, tlt.InPointer[[Cols], [1]])
+        assert_type(output_row, tlt.OutPointer[[Cols], [1]])
+        assert_type(input_row + columns, tl.InTilePointers[[Cols], [1], [Tile]])
+        assert_type(output_row + columns, tl.OutTilePointers[[Cols], [1], [Tile]])
 
     def reject_wrong_row_stride[
         Rows: IntVar, Cols: IntVar, Stride: IntVar, OtherStride: IntVar
@@ -234,7 +235,7 @@ if TYPE_CHECKING:
         input_ptr: tlt.InPointer[[Rows, Cols], [Stride, 1]],
         other_stride: Int[OtherStride],
     ) -> None:
-        input_ptr += tl.program_id(0) * other_stride  # pyrefly: ignore[unsupported-operation]
+        input_ptr + tl.program_id(0) * other_stride  # pyrefly: ignore[unsupported-operation]
 
     def typed_boundary[Rows: IntVar, Cols: IntVar, Stride: IntVar, Other: IntVar](
         x: host_tensor.Tensor[[Rows, Cols], [Stride, 1]],

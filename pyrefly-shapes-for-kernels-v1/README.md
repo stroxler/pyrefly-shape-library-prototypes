@@ -17,6 +17,18 @@ to Pyrefly core or v0. The independent Pallas fixture runs its original
 vector-add kernel through an explicit checked JAX boundary, using semantic
 annotations directly without source rewriting.
 
+## Kernel-body changes in v1
+
+Keep the upstream algorithm, indexing, and control flow. A mechanical change
+to introduce a fresh local is allowed when an existing parameter or local is
+reassigned a pointer of a different semantic shape, for example changing
+`X += row * stride` and later `X + cols` to `x_row = X + row * stride` and
+`x_row + cols`. Comment next to each departure so readers can compare it
+with upstream. This gives Pyrefly a true lower-rank pointer and makes the
+transition visible in IDE inlay hints. It does not introduce typed semantic
+helpers or assert that GPU performance is unchanged; the frontend and CPU
+interpreter tests check the preserved behavior, not GPU performance.
+
 Each vector-add fixture also shows the upstream host call beside an explicit
 checked boundary. Triton's `add(x, y)` follows its tutorial wrapper with a
 call-local device check for CPU testing. JAX's Pallas design document has no
@@ -60,7 +72,8 @@ contract to demonstrate the wrong result such a map can produce. Triton's
 matmul host boundary also builds a typed output-tile layout, deriving its
 program count and checking the dimension and block-size arguments at launch;
 the grouped PID mapping inside the kernel remains unchecked. Both
-fixtures keep the upstream kernel statements and exercise the supported CPU
+fixtures keep the upstream algorithm (with documented pointer-local renamings
+where the semantic pointer type changes) and exercise the supported CPU
 interpretation mode.
 
 `ConstExpr[T]` is an `Annotated[T, "triton.constexpr"]` type alias: Pyrefly sees
