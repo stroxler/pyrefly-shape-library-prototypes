@@ -7,6 +7,26 @@ from shape_extensions import IntTuple, IntVar
 
 class InPointer[Target: IntTuple, Strides: IntTuple]:
     @overload
+    def __add__[Rows: IntVar, Cols: IntVar, RS: IntVar, CS: IntVar, BR: IntVar](
+        self: InPointer[[Rows, Cols], [RS, CS]],
+        address: tl.WrappedRowAddress[Rows, [BR], RS],
+    ) -> SelectedInputRowPointer[Rows, Cols, RS, CS, BR, Literal["wrapped_0"]]: ...
+    @overload
+    def __add__[Rows: IntVar, Cols: IntVar, RS: IntVar, CS: IntVar, BR: IntVar](
+        self: InPointer[[Rows, Cols], [RS, CS]],
+        address: tl.RowAddress[[BR], RS],
+    ) -> SelectedInputRowPointer[Rows, Cols, RS, CS, BR, Literal["wrapped_1"]]: ...
+    @overload
+    def __add__[M: IntVar, K: IntVar, AM: IntVar, AK: IntVar, BM: IntVar, BK: IntVar](
+        self: InPointer[[M, K], [AM, AK]],
+        address: tl.ClampedRowMatrixAddress[M, [BM], [BK], AM, AK],
+    ) -> tl.ClampedRowMatrixTilePointers[M, K, BM, BK, AM, AK]: ...
+    @overload
+    def __add__[K: IntVar, N: IntVar, BK: IntVar, BN: IntVar, TileK: IntVar, TileN: IntVar](
+        self: InPointer[[K, N], [BK, BN]],
+        address: tl.ClampedColumnMatrixAddress[N, [TileK], [TileN], BK, BN],
+    ) -> tl.ClampedColumnMatrixTilePointers[K, N, TileK, TileN, BK, BN]: ...
+    @overload
     def __add__[
         Batch: IntVar, Heads: IntVar, Tokens: IntVar, Dim: IntVar,
         StrideZ: IntVar, StrideH: IntVar, TokenStride: IntVar,
@@ -106,7 +126,41 @@ class InPointer[Target: IntTuple, Strides: IntTuple]:
         [TileRows, TileCols],
         Literal["wrapped_1"],
     ]: ...
+class SelectedInputRowPointer[
+    Rows: IntVar,
+    Cols: IntVar,
+    RS: IntVar,
+    CS: IntVar,
+    BR: IntVar,
+    Origin: str,
+]:
+    @overload
+    def __add__[BC: IntVar](
+        self: SelectedInputRowPointer[
+            Rows, Cols, RS, CS, BR, Literal["wrapped_0"]
+        ],
+        address: tl.ColumnAddress[[BC], CS],
+    ) -> tl.InTilePointers[
+        [Rows, Cols], [RS, CS], [BR, BC], Literal["wrapped_0"]
+    ]: ...
+    @overload
+    def __add__[BC: IntVar](
+        self: SelectedInputRowPointer[
+            Rows, Cols, RS, CS, BR, Literal["wrapped_1"]
+        ],
+        address: tl.WrappedColumnAddress[Cols, [BC], CS],
+    ) -> tl.InTilePointers[
+        [Rows, Cols], [RS, CS], [BR, BC], Literal["wrapped_1"]
+    ]: ...
+
 class OutPointer[Target: IntTuple, Strides: IntTuple]:
+    dtype: tl.PointerDType
+    type: tl.PointerDType
+    @overload
+    def __add__[M: IntVar, N: IntVar, CM: IntVar, CN: IntVar, BM: IntVar, BN: IntVar](
+        self: OutPointer[[M, N], [CM, CN]],
+        address: tl.StridedMatrixAddress[[BM], [BN], CM, CN],
+    ) -> tl.OutTilePointers[[M, N], [CM, CN], [BM, BN], Literal["indexed"]]: ...
     @overload
     def __add__[
         Batch: IntVar, Heads: IntVar, Tokens: IntVar, Dim: IntVar,

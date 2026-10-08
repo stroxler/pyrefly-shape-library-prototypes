@@ -1,5 +1,24 @@
 # Pallas examples
 
+`test_pipeline_matmul.py` checks the Hopper Mosaic GPU pipeline from JAX's
+GPU pipelining guide. The host signature ties FP16 `[M,K]` and `[K,N]` to
+`[M,N]`; runtime checks require matching devices, whole positive output/K
+tiles and WGMMA-compatible tile/swizzle alignment. Kernel Refs distinguish
+GMEM inputs/output, SMEM pipeline tiles and an accumulator, with static
+checks of their matmul contraction axis and final store tile. Tests inspect
+the grid, output specification and scratch metadata with the GPU launcher
+mocked; no GPU execution or kernel lowering is claimed. The installed JAX
+uses `out_type`/`scratch_types` rather than the guide's obsolete
+`out_shape`/`scratch_shapes`, so those launch names and the local stub are
+updated without changing the nested kernel body. It also moved
+`delay_release` from `emit_pipeline` to `BlockSpec`; the upstream kernel body
+needs a separate API migration before it can run with this JAX release. When
+we revisit it, move `delay_release=1` to both input `BlockSpec` calls, remove
+it from `emit_pipeline`, then rerun frontend/GPU validation; this would be an
+intentional departure from the preserved upstream kernel body.
+As in the other layouts, static types do not prove the index-map lambdas
+agree with the intended grid tiling.
+
 `test_ragged_dot.py` ports Marin's group-indexed Pallas contraction. The
 checked layout binds LHS `[Rows,Inner]`, RHS `[Groups,Inner,Cols]`, two
 `[Groups]` bound arrays and output `[Rows,Cols]` to the three-axis grid.

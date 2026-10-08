@@ -23,6 +23,7 @@ class TiledOutputLayout[Shape: IntTuple, Tile: IntTuple]:
     shape_parameters: tuple[str, ...]
     tile_parameters: tuple[str, ...]
     metadata: tuple[tuple[str, int], ...]
+    persistent_programs: int | None = None
 
     @property
     def grid(self) -> tuple[int, ...]:
@@ -30,7 +31,13 @@ class TiledOutputLayout[Shape: IntTuple, Tile: IntTuple]:
         programs = 1
         for size, tile in zip(self.output_shape, self.tile_shape, strict=True):
             programs *= (size + tile - 1) // tile
-        return (programs,)
+        return (
+            (
+                min(programs, self.persistent_programs)
+                if self.persistent_programs
+                else programs
+            ),
+        )
 
     def launch[**Args, Result](
         self,
@@ -455,6 +462,7 @@ def tiled_output[Length: IntVar, Stride: IntVar, Block: IntVar](
     shape_parameters: tuple[str],
     tile_parameters: tuple[str],
     metadata: Mapping[str, int] | None = None,
+    persistent_programs: int | None = None,
 ) -> TiledOutputLayout[[Length], [Block]]: ...
 
 
@@ -473,6 +481,7 @@ def tiled_output[
     shape_parameters: tuple[str, str],
     tile_parameters: tuple[str, str],
     metadata: Mapping[str, int] | None = None,
+    persistent_programs: int | None = None,
 ) -> TiledOutputLayout[[Rows, Cols], [BlockRows, BlockCols]]: ...
 
 
@@ -483,6 +492,7 @@ def tiled_output(
     shape_parameters: tuple[str, ...],
     tile_parameters: tuple[str, ...],
     metadata: Mapping[str, int] | None = None,
+    persistent_programs: int | None = None,
 ) -> TiledOutputLayout:
     """Check output dimensions and declare their correspondence to the launch."""
     if output.ndim not in (1, 2) or len(blocks) != output.ndim:
@@ -498,7 +508,13 @@ def tiled_output(
         raise ValueError("Launch parameter names must be distinct")
     if any(type(value) is not int or value <= 0 for _, value in extra):
         raise ValueError("Additional launch metadata must be positive integers")
-    return TiledOutputLayout(shape, blocks, shape_parameters, tile_parameters, extra)
+    if persistent_programs is not None and (
+        type(persistent_programs) is not int or persistent_programs <= 0
+    ):
+        raise ValueError("Persistent program count must be positive")
+    return TiledOutputLayout(
+        shape, blocks, shape_parameters, tile_parameters, extra, persistent_programs
+    )
 
 
 def grid_stride_output[

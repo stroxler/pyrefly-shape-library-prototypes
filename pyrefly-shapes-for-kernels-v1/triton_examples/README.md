@@ -1,5 +1,56 @@
 # Triton examples
 
+Kernel inventory: v1 includes every `@triton.jit` body in the top-level
+numbered tutorials 01–12, including the separate numbered
+`06-fused-attention-ws.py`, both kernels in 08 and 10, all five matmul
+kernels plus `_compute_pid` in 09, and all four split-K kernels in 12.
+Tutorial 06's warp-specialized version lives in
+`test_attention_ws_numbered.py`; tutorial 09's four additional variants live
+in `test_persistent_matmul_variants.py`. This inventories kernel bodies, not
+full hardware execution or proof of every host wrapper. The multi-CTA
+tutorial 15 is intentionally excluded: its distributed loops require a
+`tl.range(multi_cta=True)` frontend feature absent from PyPI Triton 3.8.0.
+There are no top-level numbered tutorials 13 or 14 in this checkout.
+Unnumbered warp-specialized attention files and the separate CPU/Gluon
+tutorial trees are outside this inventory.
+
+`test_block_scaled_matmul.py` retains tutorial 10's Blackwell descriptor and
+CDNA4 packed-pointer kernels. Its host validators check packed shapes,
+scale-array shapes, declared output dtype, and layout/device requirements;
+virtual-target frontend compilation covers both kernels. The validators do
+not construct descriptors or establish GPU numerical correctness.
+`test_programmatic_dependent_launch.py` retains tutorial 11's vector-add
+kernel and checks its shape contract; GPU-dependent launch ordering is not
+statically proven. `test_split_k_matmul.py` retains tutorial 12's four JIT
+bodies and checks input/output and scratch shapes at the host boundary.
+Neither program-ID scheduling nor split-K iteration coverage is proven by
+the current semantic types.
+
+`test_persistent_matmul.py` keeps tutorial 09's persistent tiling loop and
+its grouped-ID helper intact. Both input matrix extents/strides and output
+`[M,N]` use the generic `InPointer`/`OutPointer` types. Clamped row and
+column offsets carry the `M`/`N` bounds into masked K loads; the output
+store checks both axis masks. A tiled output layout additionally caps the
+program grid at `NUM_SMS`, matching the loop's program stride, and checks
+shape, tile and persistent-scheduler metadata before launch. The frontend
+compiles the complete kernel; CPU interpretation compares irregular M/N/K
+sizes and padded/transposed input strides against Torch. The interface
+enforces compatible FP16 shapes, positive
+input strides and block sizes, but it does not prove that `_compute_pid`
+visits every output tile exactly once or that each K iteration advances the
+correct allocation. Distinct strides remain tied to the pointer views; the
+`StridedMatrixAddress` used for output addresses is a general address
+construction, not a matrix-specific allocation type.
+
+`test_persistent_matmul_variants.py` contains tutorial 09's nonpersistent,
+host-descriptor TMA, persistent TMA, and device-descriptor persistent kernels.
+The ordinary pointer kernel also has a checked Torch shape/stride boundary
+and CPU interpreter coverage. All four bodies compile through Triton's
+frontend, including both persistent-TMA epilogue branches. Descriptor
+provenance and hardware execution are not validated; the stub overload for
+making a tensor descriptor preserves row-major pointer shapes and strides,
+but does not prove that a device descriptor is constructed and used safely.
+
 `test_grouped_gemm.py` covers tutorial 08's indirect matrix pointers and
 packed per-group size/leading-dimension arrays. `checked_problem` checks the
 contracting dimension of each pair statically and at runtime; the grouped
@@ -16,6 +67,16 @@ stubs; they should eventually be replaced by a composable indirect-pointer
 model rather than more named matrix types. The launch converts validated
 Torch allocations to those roles, but that role conversion is not itself
 checked against the pointer-of-pointer stubs.
+
+`test_grouped_gemm_tma.py` retains tutorial 08's second kernel, whose TMA
+descriptors load A as `[M,K]` and B as `[N,K]`, then transpose the B tile
+for `tl.dot`. Its checked float16 boundary requires whole tiles, nonoverlapping
+row-major layouts, aligned row strides, matching devices, and CUDA compute
+capability 9 or newer. Both FP16 and FP8 kernel branches compile to TTIR for a
+virtual Hopper target; CPU tests validate rejected host inputs, but descriptor
+loads do not execute in the CPU interpreter. The float16 adapter does not claim
+to validate FP8 inputs or prove that packed per-group metadata matches the
+indirect device pointers. GPU lowering and numerical execution are untested.
 
 `test_extern_functions.py` checks tutorial 07's original `libdevice.asin`
 kernel. A checked host view requires a contiguous float32/float64 vector,
@@ -82,6 +143,14 @@ or that saved mean/rstd values belong to X. The lock array's `2 * Groups`
 length is enforced by `checked_group_locks` at runtime; Pyrefly does not infer
 it from the generic pointer arithmetic. Older example-specific row/scratch
 classes still exist in unrelated portions of the copied v0 overlay.
+
+`test_attention_ws_numbered.py` retains all seven JIT bodies in the separately
+numbered warp-specialized variant of tutorial 06. The forward and backward
+entrypoints compile through the Triton frontend, and the backward preprocess
+has CPU interpreter coverage. This fixture does not check the tutorial's
+autotuner or full host attention wrapper; descriptor execution and numerical
+forward/backward attention still require a suitable GPU. Four localized
+diagnostic suppressions record limits in the existing tensor operations.
 
 `test_attention_forward.py` retains the executable bodies of Triton's tutorial
 06 descriptor-based forward kernel and its two JIT helpers. The signature

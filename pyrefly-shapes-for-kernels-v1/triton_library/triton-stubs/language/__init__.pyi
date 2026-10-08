@@ -551,6 +551,29 @@ class AttentionStatsTilePointers[Heads: IntVar, Tokens: IntVar, Tile: IntTuple]:
 def make_tensor_descriptor[
     Rows: IntVar,
     Cols: IntVar,
+    BR: IntVar,
+    BC: IntVar,
+](
+    ptr: InPointer[[Rows, Cols], [Cols, 1]],
+    shape: IntListLiteral[[Rows, Cols]],
+    strides: IntListLiteral[[Cols, 1]],
+    block_shape: IntListLiteral[[BR, BC]],
+) -> tensor_descriptor[Rows, Cols, Cols, BR, BC]: ...
+@overload
+def make_tensor_descriptor[
+    Rows: IntVar,
+    Cols: IntVar,
+    BR: IntVar,
+](
+    ptr: OutPointer[[Rows, Cols], [Cols, 1]],
+    shape: IntListLiteral[[Rows, Cols]],
+    strides: IntListLiteral[[Cols, 1]],
+    block_shape: IntListLiteral[[BR, int]],
+) -> tensor_descriptor[Rows, Cols, Cols, BR, int]: ...
+@overload
+def make_tensor_descriptor[
+    Rows: IntVar,
+    Cols: IntVar,
     Stride: IntVar,
     BR: IntVar,
     BC: IntVar,
@@ -571,6 +594,11 @@ def make_tensor_descriptor[Groups: IntVar, BR: IntVar, BC: IntVar](
 ) -> tensor_descriptor[int, int, int, BR, BC]: ...
 
 class ProgramId[GridAxis: int = Literal[-1]]:
+    @overload
+    def __mul__[Stride: IntVar](
+        self: ProgramId[Literal[1]], block: SplitStride[Stride]
+    ) -> SplitAddress[Stride]: ...
+    @overload
     def __mul__[Block: IntVar](
         self, block: Int[Block]
     ) -> TileStart[[Block], GridAxis]: ...
@@ -752,6 +780,10 @@ class ClampedColumnAxisOffsets[Dim: IntVar, Tile: IntTuple]:
 
 class RowAddress[Tile: IntTuple, Stride: IntVar]:
     @overload
+    def __add__[Cols: IntTuple, ColumnStride: IntVar](
+        self, other: ColumnAddress[Cols, ColumnStride]
+    ) -> StridedMatrixAddress[Tile, Cols, Stride, ColumnStride]: ...
+    @overload
     def __add__[Cols: IntTuple](
         self, other: ColumnAxisOffsets[Cols]
     ) -> GroupedMatrixOffsets[Tile, Cols, Stride]: ...
@@ -765,6 +797,9 @@ class RowAddress[Tile: IntTuple, Stride: IntVar]:
     ) -> ClampedColumnMatrixAddress[Dim, Tile, Cols, Stride, ColumnStride]: ...
 
 class GroupedMatrixOffsets[TileRows: IntTuple, TileCols: IntTuple, Stride: IntVar]: ...
+class StridedMatrixAddress[
+    TileRows: IntTuple, TileCols: IntTuple, RowStride: IntVar, ColStride: IntVar
+]: ...
 class ColumnAddress[Tile: IntTuple, Stride: IntVar]: ...
 class ColumnMajorMatrixOffsets[Rows: IntVar, Cols: IntVar, Stride: IntVar]: ...
 class ScaledOffsets[
@@ -1528,6 +1563,12 @@ def where[Dim: IntVar, Tile: IntTuple](
     condition: Mask[[Dim], Tile], x: Offsets[Tile], y: Literal[0]
 ) -> ClampedOffsets[Dim, Tile]: ...
 @overload
+def where[Dim: IntVar, Tile: IntTuple, Stride: IntVar, Origin: str, GridAxis: int](
+    condition: Mask[[Dim], Tile, Origin, GridAxis],
+    x: Offsets[Tile, Stride, Origin, GridAxis],
+    y: Literal[0],
+) -> ClampedOffsets[Dim, Tile]: ...
+@overload
 def where[Tile: IntTuple](
     condition: tensor[Tile], x: float, y: float
 ) -> tensor[Tile]: ...
@@ -1840,6 +1881,17 @@ def atomic_add[Tokens: IntVar, Dim: IntVar, BM: IntVar](
     ptrs: ZeroedAttentionOutputTilePointers[Tokens, Dim, BM],
     value: tensor[[BM, Dim]],
 ) -> tensor[[BM, Dim]]: ...
+@overload
+def atomic_add[
+    Rows: IntVar, Cols: IntVar, RS: IntVar, CS: IntVar,
+    TileRows: IntVar, TileCols: IntVar,
+](
+    ptrs: OutTilePointers[
+        [Rows, Cols], [RS, CS], [TileRows, TileCols], Literal["indexed"]
+    ],
+    value: tensor[[TileRows, TileCols]],
+    mask: MatrixMask[Rows, Cols, [TileRows], [TileCols]],
+) -> tensor[[TileRows, TileCols]]: ...
 @overload
 def max[Block: IntVar](value: tensor[[Block]], axis: Literal[0]) -> tensor[[]]: ...
 @overload

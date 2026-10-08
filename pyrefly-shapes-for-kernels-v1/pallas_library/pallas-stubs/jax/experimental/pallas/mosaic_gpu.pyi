@@ -92,6 +92,7 @@ class BlockSpec[Rows: IntVar, Cols: IntVar]:
         index_map: Callable[[int], tuple[int, int]],
         *,
         transforms: tuple[TilingTransform, SwizzleTransform],
+        delay_release: int = 0,
     ) -> None: ...
 
 def wgmma[Rows: IntVar, Inner: IntVar, Cols: IntVar](
@@ -114,7 +115,6 @@ def emit_pipeline[Rows: IntVar, Inner: IntVar, Cols: IntVar](
     in_specs: list[BlockSpec[Rows, Inner] | BlockSpec[Inner, Cols]],
     grid: tuple[int],
     max_concurrent_steps: Literal[2],
-    delay_release: Literal[1],
 ) -> MatmulPipeline[Rows, Inner, Cols]: ...
 def commit_smem() -> None: ...
 def copy_smem_to_gmem[Rows: IntVar, Cols: IntVar](
@@ -141,8 +141,8 @@ def kernel[
         None,
     ],
     *,
-    out_shape: ShapeDtypeStruct[[Rows, Cols]],
-    scratch_shapes: dict[str, SMEM[RowTile, ColTile] | ACC[RowTile, ColTile]],
+    out_type: ShapeDtypeStruct[[Rows, Cols]],
+    scratch_types: dict[str, SMEM[RowTile, ColTile] | ACC[RowTile, ColTile]],
     grid: tuple[int, int],
     grid_names: tuple[Literal["m"], Literal["n"]],
 ) -> Callable[
