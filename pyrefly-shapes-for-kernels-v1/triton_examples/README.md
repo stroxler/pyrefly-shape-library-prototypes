@@ -1,7 +1,65 @@
 # Triton examples
 
-`test_layer_norm_backward.py` retains Triton's fused backward input-gradient
-algorithm. It names selected input/output rows, scratch tiles, and the scalar
+`test_grouped_gemm.py` covers tutorial 08's indirect matrix pointers and
+packed per-group size/leading-dimension arrays. `checked_problem` checks the
+contracting dimension of each pair statically and at runtime; the grouped
+adapter verifies every concrete matrix's dtype, device, positive whole-tile
+dimensions, and row-major element strides before allocating outputs and
+packing the five device arrays in the kernel's expected order. The original
+unmasked kernel compiles to TTIR, and the CPU interpreter checks two groups
+of differing shapes. The list of different problem dimensions is necessarily
+heterogeneous: static checking establishes each pair's relationship but
+cannot currently express the value-dependent contents of the packed size and
+pointer arrays, nor prove the kernel's dynamic group/tile scheduling. The
+kernel-side group-address classes retain separate A/B/C roles from the v0
+stubs; they should eventually be replaced by a composable indirect-pointer
+model rather than more named matrix types. The launch converts validated
+Torch allocations to those roles, but that role conversion is not itself
+checked against the pointer-of-pointer stubs.
+
+`test_extern_functions.py` checks tutorial 07's original `libdevice.asin`
+kernel. A checked host view requires a contiguous float32/float64 vector,
+binds its length to the masked input and output pointers, and checks the
+launch grid and block size. Triton's frontend compiles the real external
+call. The CPU interpreter does not implement `libdevice.asin`, so its test
+substitutes an identity function *only during interpretation* to exercise
+pointer arithmetic and partial-tile masking; numerical asin correctness on
+GPU is not claimed. The type rule for `libdevice.asin` preserves the tile
+shape; it does not capture the operation's numerical domain.
+
+`test_attention_backward.py` adds tutorial 06's full backward kernel and its
+two dK/dV and dQ JIT helpers. The checked host boundary relates contiguous
+FP16 Q/K/V/dO and dQ/dK/dV `[B,H,T,D]` allocations to float32 saved M/Delta
+`[B,H,T]` and a `(T/BLOCK_N1, 1, B*H)` launch. All gradients share a grid
+only when `BLOCK_M2 == BLOCK_N1`; other whole-block and power-of-two
+restrictions are checked before launch because neither scan masks its tails.
+The adapter currently uses noncausal, same-length self-attention with scale
+one; it does not infer the provenance of saved M/Delta. Generic allocation
+pointers are lowered to existing head-local tile types after a checked
+batch/head address calculation. The inner helpers check contraction axes and
+pointer advances, but the program-ID arithmetic and iteration coverage are
+still only an intended layout. Triton's frontend compiles the complete
+kernel; the CPU interpreter agrees with an independent Torch gradient.
+The upstream float `LN2: tl.constexpr` receives one stub-only diagnostic
+because the v1 `tl.constexpr` stub models integer metadata.
+
+`test_attention_backward_preprocess.py` retains tutorial 06's unmasked
+attention-backward preprocessing body. Two contiguous `[B,H,T,D]` inputs
+produce a float32 `[B,H,T]` delta by reducing features per query; the checked
+grid is `(T/BLOCK_M, B*H)`. Generic allocation pointers preserve the host
+axes and unit feature stride, while the existing head-selection and tile
+address types express the arithmetic within each program. The checked adapter
+requires matching shapes, dtypes, devices, contiguous layouts, whole query
+blocks, and power-of-two `D` because the original loads and stores have no
+tail masks. Frontend and CPU tests check the unchanged body, but the types
+alone do not prove that the flattened `program_id(1)` addresses the intended
+batch/head pair. The static pointer's first two strides are gradual (`int`);
+contiguity is checked at the host boundary.
+
+`test_layer_norm_backward.py` retains both Triton backward kernels: a fused
+input-gradient/partial-gradient stage and a final reduction from
+`[Groups, Cols]` scratch to two `[Cols]` weight/bias gradients. It names
+selected input/output rows, scratch tiles, and the scalar
 lock pointer separately instead of rebinding upstream parameters; comments mark
 departures. It writes DX and grouped partial weight/bias gradients, so the
 checked host call explicitly allocates `[Groups, Cols]` scratch buffers and
@@ -14,9 +72,11 @@ scratch row is a rank-one pointer; adding
 column offsets creates an `InOutTilePointers` address array. A scalar lock
 pointer and its paired count pointer retain distinct roles. Frontend compilation
 and CPU interpretation
-check the same algorithm, including accumulation when multiple rows share a
-group. The final DW/DB reduction kernel is a separate next stage: partial
-buffers are *not* final weight/bias gradients. Host allocation and shape
+check both stages, including accumulation when multiple rows share a group,
+the final masked column tile, and a partial final reduction row. The reduction
+uses generic dense matrix pointers; two-dimensional pointer arrays and their
+row/column mask bind its scratch shape to its output columns. Partial buffers
+are *not* final weight/bias gradients. Host allocation and shape
 contracts are checked, but static types do not prove atomics, lock release,
 or that saved mean/rstd values belong to X. The lock array's `2 * Groups`
 length is enforced by `checked_group_locks` at runtime; Pyrefly does not infer

@@ -424,8 +424,8 @@ class Attention4DTilePointers[
 ]: ...
 
 class AttentionHeadLocalStatsPointer[Tokens: IntVar]:
-    def __add__[BM: IntVar](
-        self, offsets: Offsets[[BM]]
+    def __add__[BM: IntVar, Origin: str, GridAxis: int](
+        self, offsets: Offsets[[BM], 1, Origin, GridAxis]
     ) -> AttentionHeadLocalStatsTilePointers[Tokens, BM]: ...
 
 class Attention3DStatsPointer[Batch: IntVar, Heads: IntVar, Tokens: IntVar](
@@ -445,7 +445,7 @@ class Attention3DStatsPointer[Batch: IntVar, Heads: IntVar, Tokens: IntVar](
 
 class Attention3DHeadPointer[Batch: IntVar, Heads: IntVar, Tokens: IntVar]:
     def __add__[BM: IntVar](
-        self, offsets: Offsets[[BM]]
+        self, offsets: Offsets[[BM], 1, Literal["program"], Literal[0]]
     ) -> Attention3DTilePointers[Batch, Heads, Tokens, BM]: ...
 
 class Attention3DTilePointers[
@@ -1679,6 +1679,15 @@ def load[Cols: IntVar, BN: IntVar](
 def load[Rows: IntVar, Cols: IntVar, BM: IntVar, BN: IntVar](
     ptrs: In2DRowTilePointers[Rows, Cols, BM, BN],
     mask: MatrixMask[Rows, Cols, [BM], [BN]],
+    *,
+    other: float,
+) -> tensor[[BM, BN]]: ...
+@overload
+def load[Groups: IntVar, Cols: IntVar, BM: IntVar, BN: IntVar](
+    ptrs: InTilePointers[
+        [Groups, Cols], [Cols, 1], [BM, BN], Literal["grouped"]
+    ],
+    mask: MatrixMask[Groups, Cols, [BM], [BN]],
     *,
     other: float,
 ) -> tensor[[BM, BN]]: ...

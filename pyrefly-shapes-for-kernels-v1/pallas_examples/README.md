@@ -1,5 +1,62 @@
 # Pallas examples
 
+`test_ragged_dot.py` ports Marin's group-indexed Pallas contraction. The
+checked layout binds LHS `[Rows,Inner]`, RHS `[Groups,Inner,Cols]`, two
+`[Groups]` bound arrays and output `[Rows,Cols]` to the three-axis grid.
+Before the call, the host adapter validates that nonnegative integer group
+sizes sum to `Rows`, making the prefix boundaries valid; this check transfers
+the small group-size array to the host and is not JIT-traceable. The kernel
+body checks reduction and output tile shapes/masks; CPU interpretation covers
+partial reduction blocks. The CPU adapter rejects partial output-column
+blocks because JAX's CPU interpreter cannot lower the `program_id` reached
+through the upstream conditional store-mask branch; this is an interpreter
+restriction, not a proof that the GPU kernel cannot handle those columns.
+The type system does
+not verify the values returned by the index-map lambdas, nor associate a
+specific RHS matrix with each runtime boundary. The CPU test substitutes
+`jnp.dot` for `pl.dot` in test scope: installed JAX 0.12 removed `pl.dot`
+from the upstream body. Production execution needs that upstream API
+migration; the substitution does not change the preserved kernel source.
+The local JAX stub overlay adds `shape` and `dtype` to its synthetic
+`RaggedCumulative` result so the checked boundary can verify the prefix.
+
+`test_rms_norm.py` checks JAX's original GPU RMSNorm row kernel with
+three `[Features]` inputs and a `[Features]` output plus one optional scalar
+reciprocal standard deviation. `row_rms_layout` checks the output row and
+statistic shapes, and the checked call validates all input shapes and dtypes.
+CPU interpretation compares an irregular row against an independent JAX
+reference, exercising the partial final block. The same grid-free Ref pattern
+works for layer norm; the two-output builder still duplicates some of the
+three-output `row_statistics_layout` signature, a useful case for a general
+checked output-tuple mapping later. Neither type rule proves the numerical
+reduction nor the provenance of the returned statistic.
+
+`test_attention_backward.py` adds JAX's full two-scan attention-backward
+kernel. Its checked layout relates Q/O/dO/dQ `[B,Q,H,D]`, K/V/dK/dV
+`[B,K,H,D]`, optional integer segment IDs `[B,K]`, and float32 LSE/Delta
+`[B,H,Q]` to a shared `(B,H,K/block_kv_dkv)` grid. Pallas can support
+different query and key lengths here; both scans must have the same number
+of output blocks. The shared layout builder now permits a genuinely absent
+input (`None`) without shifting subsequent `BlockSpec`s, and the checked
+call enforces presence, shapes, dtypes, and devices. CPU tests compare both
+noncausal and causal/segmented gradients against independent JAX derivatives.
+The kernel body is unchanged. `IntListLiteral` recovers the two ordered
+dimensions in the upstream `jnp.zeros([block_rows, padded_dim])` calls;
+the generic two-matrix `fori_loop` carry then checks both scan accumulators
+and their stores without local suppressions. Index-map lambda values and
+the alignment of externally saved LSE/Delta with the inputs remain outside
+the proof.
+
+`test_attention_backward_preprocess.py` retains JAX's preprocessing body for
+attention backward. A checked layout binds two `[B,Q,H,D]` inputs to
+`[B,H,Q]` delta and groups the grid as `(Q/block_q,B,H)`. Input BlockSpecs
+select a `[block_q,padded_dim]` logical Ref; the kernel masks feature lanes
+beyond the physical `D`, allowing a non-power-of-two host head dimension.
+The output BlockSpec reorders the batch/head/query axes, and the checked call
+validates both input arrays. The builder checks the spec shapes and output
+permutation but, as for forward attention, cannot prove arbitrary index-map
+lambda bodies. CPU interpretation covers padded features and multiple heads.
+
 `test_layer_norm_backward.py` keeps JAX's GPU layer-norm input-gradient
 kernel body unchanged. A typed `row_input_gradient_layout` relates four
 same-length input rows, two saved scalar statistics, and a same-length output
@@ -7,7 +64,13 @@ gradient, using the empty grid and Pallas's full-row Refs. The CPU interpreter
 checks a partial final block against the independent layer-norm derivative.
 The wrapper validates input shapes and dtypes at launch; it does not prove
 that saved mean and reciprocal standard deviation were computed from this
-particular input. Pallas's weight-gradient kernel remains a separate example.
+particular input. `test_layer_norm_weight_grad.py` adds the upstream
+weight/bias-gradient kernel. Its checked layout ties two full `[Rows, Cols]`
+matrix Refs, two `[Cols]` vectors, two `[Rows]` saved statistics, and both
+`[Cols]` outputs to a grid of column tiles. The CPU test covers partial row
+and column tiles and compares against an independent batch reduction. The
+matrix/column Ref classes are still specialized to layer norm in the copied
+overlay; their names are prototype debt, not a new Pallas requirement.
 
 `test_attention_forward.py` retains JAX's deprecated GPU `mha_forward_kernel`
 and the optional segment-mask helper unchanged, but exercises the noncausal,

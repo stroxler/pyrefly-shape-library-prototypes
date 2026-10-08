@@ -31,6 +31,54 @@ def checked_attention_stats[Batch: IntVar, Heads: IntVar, Tokens: IntVar](
     return cast("tl.AttentionStatsPointer[Batch * Heads, Tokens]", tensor)
 
 
+def checked_attention_backward_input[
+    Batch: IntVar, Heads: IntVar, Tokens: IntVar, Dim: IntVar
+](
+    tensor: torch.Tensor[[Batch, Heads, Tokens, Dim]],
+    shape: tuple[Int[Batch], Int[Heads], Int[Tokens], Int[Dim]],
+) -> tlt.InPointer[[Batch, Heads, Tokens, Dim], [int, int, Dim, 1]]:
+    """Check a contiguous batch/head/token/feature gradient allocation."""
+    if tensor.ndim != 4 or tuple(tensor.shape) != shape or not tensor.is_contiguous():
+        raise ValueError("Attention backward input must match contiguous host axes")
+    return cast(
+        "tlt.InPointer[[Batch, Heads, Tokens, Dim], [int, int, Dim, 1]]", tensor
+    )
+
+
+def checked_attention_backward_delta[Batch: IntVar, Heads: IntVar, Tokens: IntVar](
+    tensor: torch.Tensor[[Batch, Heads, Tokens]],
+    shape: tuple[Int[Batch], Int[Heads], Int[Tokens]],
+) -> tlt.OutPointer[[Batch, Heads, Tokens], [int, Tokens, 1]]:
+    """Check contiguous per-query scalars in flattened batch/head order."""
+    if tensor.ndim != 3 or tuple(tensor.shape) != shape or not tensor.is_contiguous():
+        raise ValueError("Attention backward delta must match contiguous host axes")
+    return cast("tlt.OutPointer[[Batch, Heads, Tokens], [int, Tokens, 1]]", tensor)
+
+
+def checked_attention_backward_output[
+    Batch: IntVar, Heads: IntVar, Tokens: IntVar, Dim: IntVar
+](
+    tensor: torch.Tensor[[Batch, Heads, Tokens, Dim]],
+    shape: tuple[Int[Batch], Int[Heads], Int[Tokens], Int[Dim]],
+) -> tlt.OutPointer[[Batch, Heads, Tokens, Dim], [int, int, Dim, 1]]:
+    """Present a checked contiguous attention gradient as an output pointer."""
+    if tensor.ndim != 4 or tuple(tensor.shape) != shape or not tensor.is_contiguous():
+        raise ValueError("Attention gradient must match contiguous host axes")
+    return cast(
+        "tlt.OutPointer[[Batch, Heads, Tokens, Dim], [int, int, Dim, 1]]", tensor
+    )
+
+
+def checked_attention_backward_stats[Batch: IntVar, Heads: IntVar, Tokens: IntVar](
+    tensor: torch.Tensor[[Batch, Heads, Tokens]],
+    shape: tuple[Int[Batch], Int[Heads], Int[Tokens]],
+) -> tlt.InPointer[[Batch, Heads, Tokens], [int, Tokens, 1]]:
+    """Present saved base-two statistics and delta as read-only pointers."""
+    if tensor.ndim != 3 or tuple(tensor.shape) != shape or not tensor.is_contiguous():
+        raise ValueError("Attention statistics must match contiguous host axes")
+    return cast("tlt.InPointer[[Batch, Heads, Tokens], [int, Tokens, 1]]", tensor)
+
+
 @overload
 def as_host_tensor[Length: IntVar](
     tensor: torch.Tensor[[Length]],

@@ -23,7 +23,7 @@ from jax.experimental.pallas import (
     VocabMask,
 )
 from jax.experimental.pallas.tpu import VmemScratchRef
-from shape_extensions import Int, IntTuple, IntVar
+from shape_extensions import Int, IntListLiteral, IntTuple, IntVar
 
 float32: object
 bool_: object
@@ -56,6 +56,10 @@ def zeros[Length: IntVar](length: Int[Length], *, dtype: object) -> Tile[[Length
 @overload
 def zeros[Rows: IntVar, Cols: IntVar](
     shape: tuple[Int[Rows], Int[Cols]], *, dtype: object
+) -> Tile[[Rows, Cols]]: ...
+@overload
+def zeros[Rows: IntVar, Cols: IntVar](
+    shape: IntListLiteral[[Rows, Cols]], *, dtype: object
 ) -> Tile[[Rows, Cols]]: ...
 @overload
 def zeros[Batch: IntVar, Rows: IntVar, Cols: IntVar](

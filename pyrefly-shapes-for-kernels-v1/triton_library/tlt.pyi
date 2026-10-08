@@ -7,6 +7,30 @@ from shape_extensions import IntTuple, IntVar
 
 class InPointer[Target: IntTuple, Strides: IntTuple]:
     @overload
+    def __add__[
+        Batch: IntVar, Heads: IntVar, Tokens: IntVar, Dim: IntVar,
+        StrideZ: IntVar, StrideH: IntVar, TokenStride: IntVar,
+        FeatureStride: IntVar,
+    ](
+        self: InPointer[
+            [Batch, Heads, Tokens, Dim],
+            [StrideZ, StrideH, TokenStride, FeatureStride],
+        ],
+        offset: tl.AttentionBatchHeadOffset[Heads, StrideZ, StrideH],
+    ) -> tl.AttentionHeadLocalInputPointer[
+        Tokens, Dim, TokenStride, FeatureStride
+    ]: ...
+    @overload
+    def __add__[Batch: IntVar, Heads: IntVar, Tokens: IntVar, GridAxis: int](
+        self: InPointer[[Batch, Heads, Tokens], [int, Tokens, 1]],
+        offset: tl.TileStart[[Tokens], GridAxis],
+    ) -> tl.AttentionHeadLocalStatsPointer[Tokens]: ...
+    @overload
+    def __add__[Batch: IntVar, Heads: IntVar, Tokens: IntVar, Dim: IntVar](
+        self: InPointer[[Batch, Heads, Tokens, Dim], [int, int, Dim, 1]],
+        start: tl.ScaledTileStart[Dim, Tokens],
+    ) -> tl.Attention4DHeadPointer[Batch, Heads, Tokens, Dim]: ...
+    @overload
     def __add__[GridAxis: int](
         self, row: tl.ProgramId[GridAxis]
     ) -> tl.InScalarPointer[Target]: ...
@@ -37,6 +61,13 @@ class InPointer[Target: IntTuple, Strides: IntTuple]:
         self: InPointer[[Rows, Cols], [Stride, ColumnStride]],
         offset: tl.RowOffset[Rows, Stride],
     ) -> InPointer[[Cols], [ColumnStride]]: ...
+    @overload
+    def __add__[Groups: IntVar, Cols: IntVar, TileRows: IntVar, TileCols: IntVar](
+        self: InPointer[[Groups, Cols], [Cols, 1]],
+        address: tl.GroupedMatrixOffsets[[TileRows], [TileCols], Cols],
+    ) -> tl.InTilePointers[
+        [Groups, Cols], [Cols, 1], [TileRows, TileCols], Literal["grouped"]
+    ]: ...
     @overload
     def __add__[
         Rows: IntVar,
@@ -76,6 +107,25 @@ class InPointer[Target: IntTuple, Strides: IntTuple]:
         Literal["wrapped_1"],
     ]: ...
 class OutPointer[Target: IntTuple, Strides: IntTuple]:
+    @overload
+    def __add__[
+        Batch: IntVar, Heads: IntVar, Tokens: IntVar, Dim: IntVar,
+        StrideZ: IntVar, StrideH: IntVar, TokenStride: IntVar,
+        FeatureStride: IntVar,
+    ](
+        self: OutPointer[
+            [Batch, Heads, Tokens, Dim],
+            [StrideZ, StrideH, TokenStride, FeatureStride],
+        ],
+        offset: tl.AttentionBatchHeadOffset[Heads, StrideZ, StrideH],
+    ) -> tl.AttentionHeadLocalOutputPointer[
+        Tokens, Dim, TokenStride, FeatureStride
+    ]: ...
+    @overload
+    def __add__[Batch: IntVar, Heads: IntVar, Tokens: IntVar, Axis: int](
+        self: OutPointer[[Batch, Heads, Tokens], [int, Tokens, 1]],
+        start: tl.TileStart[[Tokens], Axis],
+    ) -> tl.Attention3DHeadPointer[Batch, Heads, Tokens]: ...
     @overload
     def __add__[GridAxis: int](
         self, row: tl.ProgramId[GridAxis]

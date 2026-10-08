@@ -57,6 +57,16 @@ def fori_loop[Block: IntVar](
     init_val: tuple[Tile[[Block]], Tile[[Block]]],
 ) -> tuple[Tile[[Block]], Tile[[Block]]]: ...
 @overload
+def fori_loop[Rows: IntVar, Cols: IntVar](
+    lower: int,
+    upper: int,
+    body_fun: Callable[
+        [int, tuple[Tile[[Rows, Cols]], Tile[[Rows, Cols]]]],
+        tuple[Tile[[Rows, Cols]], Tile[[Rows, Cols]]],
+    ],
+    init_val: tuple[Tile[[Rows, Cols]], Tile[[Rows, Cols]]],
+) -> tuple[Tile[[Rows, Cols]], Tile[[Rows, Cols]]]: ...
+@overload
 def fori_loop[Heads: IntVar, Dim: IntVar](
     lower: int,
     upper: int,
