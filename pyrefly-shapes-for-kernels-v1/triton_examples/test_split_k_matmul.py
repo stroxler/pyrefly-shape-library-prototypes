@@ -158,7 +158,7 @@ def _skinny_atomic_kernel(
 def _twopass_compute_kernel(
     a_ptr: tlt.InPointer[[M, K], [AM, AK]],
     b_ptr: tlt.InPointer[[K, N], [BK, BN]],
-    scratch_ptr: tl.Scratch3DPointer[Split, M, N, SK, SM, SN],
+    scratch_ptr: tlt.InOutPointer[[Split, M, N], [SK, SM, SN]],
     M: Int[M],
     N: Int[N],
     K: Int[K],
@@ -220,7 +220,7 @@ def _twopass_compute_kernel(
 
 @semantic_jit
 def _twopass_reduce_kernel(
-    scratch_ptr: tl.Scratch3DPointer[Split, M, N, SK, SM, SN],
+    scratch_ptr: tlt.InOutPointer[[Split, M, N], [SK, SM, SN]],
     c_ptr: tlt.OutPointer[[M, N], [CM, CN]],
     M: Int[M],
     N: Int[N],
@@ -261,7 +261,7 @@ def checked_scratch[Parts: IntVar, Rows: IntVar, Cols: IntVar](
     split: int,
     rows: int,
     cols: int,
-) -> tl.Scratch3DPointer[Parts, Rows, Cols, Rows * Cols, Cols, 1]:
+) -> tlt.InOutPointer[[Parts, Rows, Cols], [Rows * Cols, Cols, 1]]:
     """Check the temporary reduction allocation before exposing its pointer role."""
     if (
         tuple(scratch.shape) != (split, rows, cols)
@@ -270,7 +270,9 @@ def checked_scratch[Parts: IntVar, Rows: IntVar, Cols: IntVar](
         or not scratch.is_contiguous()
     ):
         raise ValueError("Split-K scratch must be dense float32 [split, rows, cols]")
-    return cast("tl.Scratch3DPointer[Parts, Rows, Cols, Rows * Cols, Cols, 1]", scratch)
+    return cast(
+        "tlt.InOutPointer[[Parts, Rows, Cols], [Rows * Cols, Cols, 1]]", scratch
+    )
 
 
 def split_k_matmul[Rows: IntVar, Inner: IntVar, Cols: IntVar](
@@ -535,6 +537,156 @@ class SplitKMatmulTest(unittest.TestCase):
 
 if TYPE_CHECKING:
 
+    def check_generic_axis_offsets[
+        Depth: IntVar,
+        Rows: IntVar,
+        Cols: IntVar,
+        DS: IntVar,
+        RS: IntVar,
+        CS: IntVar,
+    ](
+        offsets: tl.AxisOffsets[
+            [Depth, Rows, Cols], [DS, RS, CS], Literal[1], Literal["index"]
+        ],
+        row: tl.RowAxisOffsets[Rows],
+        scaled_row: tl.RowAddress[Rows, RS],
+        step: Int[RS],
+    ) -> None:
+        assert_type(
+            offsets[:, None],
+            tl.Offsets[[Depth, 1, Rows, Cols], [DS, 0, RS, CS]],
+        )
+        assert_type(row * step, tl.RowAddress[Rows, RS])
+        raw: tl.RowAxisOffsets[Rows] = scaled_row  # pyrefly: ignore[bad-assignment]
+
+    def check_offset_rank_and_scale[BlockK: IntVar, Step: IntVar](
+        block: Int[BlockK], step: Int[Step]
+    ) -> None:
+        offsets = tl.arange(0, block)
+        assert_type(offsets, tl.Offsets[[BlockK], [1]])
+        assert_type(offsets[:, None], tl.RowAxisOffsets[BlockK])
+        assert_type(offsets[None, :], tl.ColumnAxisOffsets[BlockK])
+        assert_type(offsets * step, tl.Offsets[[BlockK], [Step]])
+        assert_type((offsets * step) * step, tl.Offsets[[BlockK], [Step * Step]])
+        row_grid: tl.Offsets[[BlockK, 1], [1, 0]] = offsets[:, None]
+        column_grid: tl.Offsets[[1, BlockK], [0, 1]] = offsets[None, :]
+        row_scaled: tl.Offsets[[BlockK, 1], [Step, 0]] = offsets[:, None] * step
+        column_scaled: tl.Offsets[[1, BlockK], [0, Step]] = offsets[None, :] * step
+        assert_type(row_grid * step, tl.Offsets[[BlockK, 1], [Step, 0]])
+        assert_type(column_grid * step, tl.Offsets[[1, BlockK], [0, Step]])
+        bad_steps: tl.Offsets[[BlockK, 1], [0, Step]] = (
+            offsets[:, None] * step  # pyrefly: ignore[bad-assignment]
+        )
+        assert_type((0 + offsets[None, :]) * step, tl.ColumnAddress[BlockK, Step])
+
+    def check_higher_rank_offsets[
+        Depth: IntVar,
+        Rows: IntVar,
+        Cols: IntVar,
+        PlaneStep: IntVar,
+        RowStep: IntVar,
+        ColumnStep: IntVar,
+        Scale: IntVar,
+    ](
+        offsets: tl.Offsets[[Depth, Rows, Cols], [PlaneStep, RowStep, ColumnStep]],
+        mismatched: tl.Offsets[[Depth, Rows, Cols], [PlaneStep, RowStep]],
+        zero_step: tl.Offsets[[Depth, Rows, Cols], [PlaneStep, 0, ColumnStep]],
+        scale: Int[Scale],
+    ) -> None:
+        assert_type(
+            offsets.to(object()),
+            tl.Offsets[[Depth, Rows, Cols], [PlaneStep, RowStep, ColumnStep]],
+        )
+        assert_type(
+            offsets[:, None],
+            tl.Offsets[[Depth, 1, Rows, Cols], [PlaneStep, 0, RowStep, ColumnStep]],
+        )
+        assert_type(
+            offsets * scale,
+            tl.Offsets[
+                [Depth, Rows, Cols],
+                [PlaneStep * Scale, RowStep * Scale, ColumnStep * Scale],
+            ],
+        )
+        assert_type(
+            zero_step * scale,
+            tl.Offsets[[Depth, Rows, Cols], [PlaneStep * Scale, 0, ColumnStep * Scale]],
+        )
+        mismatched * scale  # pyrefly: ignore[unsupported-operation]
+        bad_steps: tl.Offsets[
+            [Depth, Rows, Cols], [PlaneStep * Scale, 0, ColumnStep * Scale]
+        ] = (
+            offsets * scale  # pyrefly: ignore[bad-assignment]
+        )
+
+    def check_scaled_pointer_stride[
+        Rows: IntVar,
+        Cols: IntVar,
+        BlockRows: IntVar,
+        BlockCols: IntVar,
+        RowStep: IntVar,
+        ColumnStep: IntVar,
+        Scale: IntVar,
+    ](
+        ptr: tlt.OutPointer[[Rows, Cols], [RowStep, ColumnStep]],
+        offsets: tl.Offsets[
+            [BlockRows, BlockCols], [RowStep, ColumnStep], Literal["indexed"]
+        ],
+        scale: Int[Scale],
+    ) -> None:
+        assert_type(
+            ptr + offsets,
+            tl.OutTilePointers[
+                [Rows, Cols],
+                [RowStep, ColumnStep],
+                [BlockRows, BlockCols],
+                Literal["indexed"],
+            ],
+        )
+        ptr + offsets * scale  # pyrefly: ignore[unsupported-operation]
+
+    def check_higher_rank_tensor_axes[Depth: IntVar, Rows: IntVar, Cols: IntVar](
+        values: tl.tensor[[Depth, Rows, Cols]],
+    ) -> None:
+        assert_type(values[:, None], tl.tensor[[Depth, 1, Rows, Cols]])
+        assert_type(values[None, :], tl.tensor[[1, Depth, Rows, Cols]])
+        wrong_axis: tl.tensor[[Depth, Rows, 1, Cols]] = values[:, None]  # pyrefly: ignore[bad-assignment]
+
+    def check_column_pointer_array[Cols: IntVar, Width: IntVar, Other: IntVar](
+        ptr: tlt.InPointer[[Cols], [1]],
+        columns: tl.ColumnAxisOffsets[Width],
+        mask: tl.Mask[[1, Cols], [1, Width]],
+        wrong_mask: tl.Mask[[1, Other], [1, Width]],
+    ) -> None:
+        pointers = ptr + columns
+        assert_type(
+            pointers,
+            tl.InTilePointers[[Cols], [1], [1, Width], Literal["column_axis"]],
+        )
+        assert_type(tl.load(pointers, mask=mask), tl.tensor[[1, Width]])
+        tl.load(pointers, mask=wrong_mask)  # pyrefly: ignore[no-matching-overload]
+
+    def check_wrapped_tile_width[
+        M: IntVar,
+        K: IntVar,
+        BM: IntVar,
+        BK: IntVar,
+        AM: IntVar,
+        AK: IntVar,
+    ](
+        ptr: tlt.InPointer[[M, K], [AM, AK]],
+        rows: tl.BoundedOffsets[M, [BM], Literal["wrapped"]],
+        start: int,
+        block: Int[BK],
+        row_stride: Int[AM],
+        inner_stride: Int[AK],
+    ) -> None:
+        inner = tl.arange(0, block)
+        assert_type(
+            ptr + rows[:, None] * row_stride + (start + inner[None, :]) * inner_stride,
+            tl.InTilePointers[[M, K], [AM, AK], [BM, BK], Literal["wrapped_0"]],
+        )
+
     def check_split_grid_axis[
         Parts: IntVar,
         Rows: IntVar,
@@ -543,11 +695,63 @@ if TYPE_CHECKING:
         RowStride: IntVar,
         ColumnStride: IntVar,
     ](
-        scratch: tl.Scratch3DPointer[Parts, Rows, Cols, Slice, RowStride, ColumnStride],
+        scratch: tlt.InOutPointer[
+            [Parts, Rows, Cols], [Slice, RowStride, ColumnStride]
+        ],
         slice_stride: tl.SplitStride[Slice],
     ) -> None:
         scratch + tl.program_id(1) * slice_stride
         scratch + tl.program_id(0) * slice_stride  # pyrefly: ignore[unsupported-operation]
+
+    def check_scratch_array_composition[
+        Parts: IntVar,
+        Rows: IntVar,
+        Cols: IntVar,
+        Slice: IntVar,
+        RowStride: IntVar,
+        ColStride: IntVar,
+        BlockRows: IntVar,
+        BlockCols: IntVar,
+        Other: IntVar,
+    ](
+        scratch: tlt.InOutPointer[[Parts, Rows, Cols], [Slice, RowStride, ColStride]],
+        split: tl.SplitAddress[Slice],
+        wrong_split: tl.SplitAddress[Other],
+        row: tl.RowAddress[BlockRows, RowStride],
+        wrong_row: tl.RowAddress[BlockRows, Other],
+        column: tl.ColumnAddress[BlockCols, ColStride],
+        wrong_column: tl.ColumnAddress[BlockCols, Other],
+        mask: tl.Mask[[Rows, Cols], [BlockRows, BlockCols]],
+        wrong_mask: tl.Mask[[Rows, Other], [BlockRows, BlockCols]],
+        tile: tl.tensor[[BlockRows, BlockCols]],
+    ) -> None:
+        selected = scratch + split
+        assert_type(selected, tlt.InOutPointer[[Rows, Cols], [RowStride, ColStride]])
+        scratch + wrong_split  # pyrefly: ignore[unsupported-operation]
+        selected + wrong_row  # pyrefly: ignore[unsupported-operation]
+        rows = selected + row
+        assert_type(
+            rows,
+            tl.InOutTilePointers[
+                [Rows, Cols], [RowStride, ColStride], [BlockRows, 1], Literal["axis_0"]
+            ],
+        )
+        rows + wrong_column  # pyrefly: ignore[unsupported-operation]
+        pointers = rows + column
+        assert_type(
+            pointers,
+            tl.InOutTilePointers[
+                [Rows, Cols],
+                [RowStride, ColStride],
+                [BlockRows, BlockCols],
+                Literal["indexed"],
+            ],
+        )
+        assert_type(
+            tl.load(pointers, mask=mask, other=0.0), tl.tensor[[BlockRows, BlockCols]]
+        )
+        tl.store(pointers, tile, mask=mask)
+        tl.load(pointers, mask=wrong_mask, other=0.0)  # pyrefly: ignore[no-matching-overload]
 
     def check_address_and_atomic_masks[
         Rows: IntVar,
@@ -560,15 +764,17 @@ if TYPE_CHECKING:
         BC: IntVar,
     ](
         a: tlt.InPointer[[Rows, Inner], [RS, CS]],
-        row: tl.WrappedRowAddress[Rows, [BR], RS],
-        wrong_row: tl.WrappedRowAddress[Rows, [BR], Other],
-        column: tl.ColumnAddress[[BC], CS],
+        row: tl.BoundedAxisAddress[Rows, [BR], RS, Literal["wrapped"], Literal[0]],
+        wrong_row: tl.BoundedAxisAddress[
+            Rows, [BR], Other, Literal["wrapped"], Literal[0]
+        ],
+        column: tl.ColumnAddress[BC, CS],
         output: tl.OutTilePointers[
             [Rows, Cols], [RS, CS], [BR, BC], Literal["indexed"]
         ],
         tile: tl.tensor[[BR, BC]],
-        mask: tl.MatrixMask[Rows, Cols, [BR], [BC]],
-        wrong_mask: tl.MatrixMask[Rows, Other, [BR], [BC]],
+        mask: tl.Mask[[Rows, Cols], [BR, BC]],
+        wrong_mask: tl.Mask[[Rows, Other], [BR, BC]],
     ) -> None:
         a + row + column
         a + wrong_row + column  # pyrefly: ignore[unsupported-operation]

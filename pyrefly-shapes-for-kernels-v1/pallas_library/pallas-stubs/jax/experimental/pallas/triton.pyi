@@ -6,30 +6,13 @@
 from typing import Literal, overload
 
 from jax.experimental.pallas import (
-    ContractionHorizontalMask,
-    ContractionVerticalMask,
-    DecodeOutputSlice,
-    DecodeQuerySlice,
-    DecodeResidualSlice,
-    IndexedInRef,
-    IndexedOutRef,
-    LayerNormMatrixMask,
-    LayerNormMatrixSlice,
-    LayerNormOutSlice,
-    LayerNormVectorSlice,
     Mask,
-    MhaBackwardMatrixSlice,
-    MhaBackwardOutputSlice,
-    MhaKvSlice,
-    MhaOutputSlice,
-    MhaPreprocessRef,
-    MhaQueryRef,
     RaggedLhsSlice,
-    RaggedOutSlice,
     RaggedRhsSlice,
-    RaggedStoreMask,
-    RaggedStoreRowMask,
+    RectOutputBlock,
     Tile,
+    TransformedRef,
+    ValidInRef,
 )
 from shape_extensions import IntVar
 
@@ -40,92 +23,91 @@ def dot[Rows: IntVar, Inner: IntVar, Cols: IntVar](
     lhs: Tile[[Rows, Inner]], rhs: Tile[[Inner, Cols]]
 ) -> Tile[[Rows, Cols]]: ...
 @overload
-def load[Heads: IntVar, Dim: IntVar](
-    ref: DecodeQuerySlice[Heads, Dim], *, mask: ContractionVerticalMask[Heads, int]
-) -> Tile[[Heads, Dim]]: ...
-@overload
-def store[Heads: IntVar, Dim: IntVar](
-    ref: DecodeOutputSlice[Heads, Dim],
-    value: Tile[[Heads, Dim]],
+def load[Rows: IntVar, Block: IntVar, Dim: IntVar](
+    ref: TransformedRef[[Rows, Dim], [Block, Dim], Literal["in"]],
     *,
-    mask: ContractionVerticalMask[Heads, int],
+    mask: Mask[[Block, 1], [int, 1]],
+) -> Tile[[Block, Dim]]: ...
+@overload
+def store[Rows: IntVar, Block: IntVar, Dim: IntVar](
+    ref: TransformedRef[[Rows, Dim], [Block, Dim], Literal["out"]],
+    value: Tile[[Block, Dim]],
+    *,
+    mask: Mask[[Block, 1], [int, 1]],
 ) -> None: ...
 @overload
-def store[Heads: IntVar](
-    ref: DecodeResidualSlice[Heads],
-    value: Tile[[Heads]],
+def store[Length: IntVar, Block: IntVar](
+    ref: TransformedRef[[Length], [Block], Literal["out"]],
+    value: Tile[[Block]],
     *,
-    mask: Mask[Heads, int] | None,
+    mask: Mask[[Block], [int]] | None,
 ) -> None: ...
-@overload
-def load[Queries: IntVar, Dim: IntVar](
-    ref: MhaQueryRef[Queries, Dim],
-    *,
-    mask: ContractionHorizontalMask[Dim, Dim],
-    other: float,
-) -> Tile[[Queries, Dim]]: ...
 @overload
 def load[Queries: IntVar, PaddedDim: IntVar, HeadDim: IntVar](
-    ref: MhaPreprocessRef[Queries, PaddedDim, HeadDim],
+    ref: ValidInRef[[Queries, PaddedDim], [Queries, HeadDim]],
     *,
-    mask: ContractionHorizontalMask[PaddedDim, HeadDim],
+    mask: Mask[[1, PaddedDim], [1, HeadDim]],
     other: float,
 ) -> Tile[[Queries, PaddedDim]]: ...
 @overload
-def load[Block: IntVar, PaddedDim: IntVar, HeadDim: IntVar](
-    ref: MhaBackwardMatrixSlice[Block, PaddedDim, HeadDim],
+def load[Rows: IntVar, Block: IntVar, PaddedDim: IntVar, HeadDim: IntVar](
+    ref: TransformedRef[
+        [Rows, PaddedDim], [Block, PaddedDim], Literal["in"], [Rows, HeadDim]
+    ],
     *,
-    mask: ContractionHorizontalMask[PaddedDim, HeadDim],
+    mask: Mask[[1, PaddedDim], [1, HeadDim]],
     other: float,
 ) -> Tile[[Block, PaddedDim]]: ...
 @overload
 def store[Block: IntVar, PaddedDim: IntVar, HeadDim: IntVar](
-    ref: MhaBackwardOutputSlice[Block, PaddedDim],
+    ref: TransformedRef[
+        [Block, PaddedDim], [Block, PaddedDim], Literal["out"], [Block, HeadDim]
+    ],
     value: Tile[[Block, PaddedDim]],
     *,
-    mask: ContractionHorizontalMask[PaddedDim, HeadDim],
+    mask: Mask[[1, PaddedDim], [1, HeadDim]],
 ) -> None: ...
 @overload
-def load[Keys: IntVar, Dim: IntVar](
-    ref: MhaKvSlice[Keys, Dim],
+def load[Rows: IntVar, Block: IntVar, Dim: IntVar](
+    ref: TransformedRef[[Rows, Dim], [Block, Dim], Literal["in"]],
     *,
-    mask: ContractionHorizontalMask[Dim, Dim],
+    mask: Mask[[1, Dim], [1, Dim]],
     other: float = 0.0,
-) -> Tile[[Keys, Dim]]: ...
+) -> Tile[[Block, Dim]]: ...
 @overload
-def store[Queries: IntVar, Dim: IntVar](
-    ref: MhaOutputSlice[Queries, Dim],
-    value: Tile[[Queries, Dim]],
+def store[Rows: IntVar, Dim: IntVar](
+    ref: TransformedRef[[Rows, Dim], [Rows, Dim], Literal["out"]],
+    value: Tile[[Rows, Dim]],
     *,
-    mask: ContractionHorizontalMask[Dim, Dim],
+    mask: Mask[[1, Dim], [1, Dim]],
 ) -> None: ...
 @overload
 def load[Length: IntVar, Block: IntVar](
-    ref: IndexedInRef[Length, Block],
+    ref: TransformedRef[[Length], [Block], Literal["in"]],
     *,
-    mask: Mask[Block, Length],
+    mask: Mask[[Block], [Length]],
     other: float = 0.0,
     eviction_policy: Literal["evict_last", "evict_first"] | None = None,
 ) -> Tile[[Block]]: ...
 @overload
 def store[Length: IntVar, Block: IntVar](
-    ref: IndexedOutRef[Length, Block],
+    ref: TransformedRef[[Length], [Block], Literal["out"]],
     value: Tile[[Block]],
     *,
-    mask: Mask[Block, Length],
+    mask: Mask[[Block], [Length]],
 ) -> None: ...
 @overload
 def load[RowBlock: IntVar, InnerBlock: IntVar, Inner: IntVar](
     ref: RaggedLhsSlice[RowBlock, InnerBlock, Inner],
     *,
-    mask: ContractionHorizontalMask[InnerBlock, Inner],
+    mask: Mask[[1, InnerBlock], [1, Inner]],
     other: float,
 ) -> Tile[[RowBlock, InnerBlock]]: ...
 @overload
 def load[InnerBlock: IntVar, ColBlock: IntVar, Inner: IntVar](
     ref: RaggedRhsSlice[InnerBlock, ColBlock, Inner],
     *,
-    mask: ContractionVerticalMask[InnerBlock, Inner],
+    mask: Mask[[InnerBlock, 1], [Inner, 1]],
     other: float,
 ) -> Tile[[InnerBlock, ColBlock]]: ...
 @overload
@@ -138,30 +120,15 @@ def load[InnerBlock: IntVar, ColBlock: IntVar, Inner: IntVar](
 ) -> Tile[[InnerBlock, ColBlock]]: ...
 @overload
 def store[RowBlock: IntVar, Rows: IntVar, Cols: IntVar, ColBlock: IntVar](
-    ref: RaggedOutSlice[RowBlock, Rows, Cols, ColBlock],
+    ref: RectOutputBlock[RowBlock, Rows, Cols, ColBlock],
     value: Tile[[RowBlock, ColBlock]],
     *,
-    mask: RaggedStoreRowMask[RowBlock, Rows]
-    | RaggedStoreMask[RowBlock, Rows, ColBlock, Cols],
+    mask: Mask[[RowBlock, 1], [Rows, 1]] | Mask[[RowBlock, ColBlock], [Rows, Cols]],
 ) -> None: ...
 @overload
 def load[Rows: IntVar, Cols: IntVar, RowBlock: IntVar, ColBlock: IntVar](
-    ref: LayerNormMatrixSlice[Rows, Cols, RowBlock, ColBlock],
+    ref: TransformedRef[[Rows, Cols], [RowBlock, ColBlock], Literal["in"]],
     *,
-    mask: LayerNormMatrixMask[RowBlock, Rows, ColBlock, Cols],
+    mask: Mask[[RowBlock, ColBlock], [Rows, Cols]],
     other: float,
 ) -> Tile[[RowBlock, ColBlock]]: ...
-@overload
-def load[Length: IntVar, Block: IntVar](
-    ref: LayerNormVectorSlice[Length, Block],
-    *,
-    mask: Mask[Block, Length],
-    other: float,
-) -> Tile[[Block]]: ...
-@overload
-def store[Length: IntVar, Block: IntVar](
-    ref: LayerNormOutSlice[Length, Block],
-    value: Tile[[Block]],
-    *,
-    mask: Mask[Block, Length],
-) -> None: ...

@@ -326,6 +326,32 @@ class GroupedMatmulTest(unittest.TestCase):
 
 
 if TYPE_CHECKING:
+
+    def check_clamped_address[
+        Rows: IntVar,
+        Cols: IntVar,
+        BR: IntVar,
+        BC: IntVar,
+        RS: IntVar,
+        CS: IntVar,
+    ](
+        ptr: tlt.InPointer[[Rows, Cols], [RS, CS]],
+        row: tl.BoundedAxisAddress[Rows, [BR], RS, Literal["clamped"], Literal[0]],
+        wrong_bound: tl.BoundedAxisAddress[
+            Cols, [BR], RS, Literal["clamped"], Literal[0]
+        ],
+        wrong_step: tl.BoundedAxisAddress[
+            Rows, [BR], CS, Literal["clamped"], Literal[0]
+        ],
+        col: tl.ColumnAddress[BC, CS],
+    ) -> None:
+        assert_type(
+            ptr + (row + col),
+            tl.InTilePointers[[Rows, Cols], [RS, CS], [BR, BC], Literal["clamped_0"]],
+        )
+        ptr + (wrong_bound + col)  # pyrefly: ignore[unsupported-operation]
+        ptr + (wrong_step + col)  # pyrefly: ignore[unsupported-operation]
+
     helper_tile: tl.tensor[[16, 19]] = cast(Any, None)
     assert_type(leaky_relu(helper_tile), tl.tensor[[16, 19]])
     helper_vector: tl.tensor[[16]] = cast(Any, None)
@@ -334,10 +360,19 @@ if TYPE_CHECKING:
     tile_ptrs: tl.InTilePointers[
         [20, 24], [int, int], [16, 16], Literal["wrapped_0"]
     ] = cast(Any, None)
-    k_mask: tl.ColumnMask[24, [16]] = cast(Any, None)
+    k_mask: tl.Mask[[1, 24], [1, 16]] = cast(Any, None)
     assert_type(tl.load(tile_ptrs, mask=k_mask, other=0.0), tl.tensor[[16, 16]])
-    row_mask: tl.RowMask[20, [16]] = cast(Any, None)
+    row_mask: tl.Mask[[20, 1], [16, 1]] = cast(Any, None)
     tl.load(tile_ptrs, mask=row_mask, other=0.0)  # pyrefly: ignore[no-matching-overload]
+    wrong_k_tile: tl.Mask[[1, 24], [1, 8]] = cast(Any, None)
+    tl.load(tile_ptrs, mask=wrong_k_tile, other=0.0)  # pyrefly: ignore[no-matching-overload]
+    clamped_tile_ptrs: tl.InTilePointers[
+        [20, 24], [int, int], [16, 16], Literal["clamped_0"]
+    ] = cast(Any, None)
+    assert_type(tl.load(clamped_tile_ptrs, mask=k_mask, other=0.0), tl.tensor[[16, 16]])
+    tl.load(clamped_tile_ptrs, mask=row_mask, other=0.0)  # pyrefly: ignore[no-matching-overload]
+    tl.load(clamped_tile_ptrs, mask=wrong_k_tile, other=0.0)  # pyrefly: ignore[no-matching-overload]
+    assert_type(row_mask & k_mask, tl.Mask[[20, 24], [16, 16]])
     typed_a: torch.Tensor[[20, 24]] = torch.empty((20, 24))
     typed_b: torch.Tensor[[24, 19]] = torch.empty((24, 19))
     typed_out: torch.Tensor[[20, 19]] = torch.empty((20, 19))

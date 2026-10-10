@@ -8,7 +8,7 @@ import os
 import unittest
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, assert_type, cast
 
 import torch
 import triton.language as tl
@@ -25,11 +25,11 @@ BK = IntVar("BK")
 
 @semantic_jit
 def grouped_matmul_kernel(
-    group_a_ptrs: "tl.GroupAPointers[Groups]",
-    group_b_ptrs: "tl.GroupBPointers[Groups]",
-    group_c_ptrs: "tl.GroupCPointers[Groups]",
-    group_gemm_sizes: "tl.GroupSizes[Groups]",
-    g_lds: "tl.GroupLeadingDimensions[Groups]",
+    group_a_ptrs: "tl.PointerTable[Groups, Literal['read']]",
+    group_b_ptrs: "tl.PointerTable[Groups, Literal['read']]",
+    group_c_ptrs: "tl.PointerTable[Groups, Literal['write']]",
+    group_gemm_sizes: "tl.PackedIntTable[Groups, 3]",
+    g_lds: "tl.PackedIntTable[Groups, 3]",
     group_size: Int[Groups],
     NUM_SM: ConstExpr[int],
     BLOCK_SIZE_M: ConstExpr[Int[BM]],
@@ -168,11 +168,11 @@ def checked_grouped_gemm(
     sizes = torch.tensor(shapes, dtype=torch.int32, device=device)
     leading = torch.tensor(strides, dtype=torch.int32, device=device)
     grouped_matmul_kernel[(num_sm,)](
-        cast("tl.GroupAPointers[int]", a_ptrs),
-        cast("tl.GroupBPointers[int]", b_ptrs),
-        cast("tl.GroupCPointers[int]", c_ptrs),
-        cast("tl.GroupSizes[int]", sizes),
-        cast("tl.GroupLeadingDimensions[int]", leading),
+        cast("tl.PointerTable[int, Literal['read']]", a_ptrs),
+        cast("tl.PointerTable[int, Literal['read']]", b_ptrs),
+        cast("tl.PointerTable[int, Literal['write']]", c_ptrs),
+        cast("tl.PackedIntTable[int, 3]", sizes),
+        cast("tl.PackedIntTable[int, 3]", leading),
         len(problems),
         num_sm,
         block_m,
@@ -238,6 +238,23 @@ class GroupedGemmTest(unittest.TestCase):
 
 if TYPE_CHECKING:
 
+    def check_indirect_tiles[Groups: IntVar, BM: IntVar, BN: IntVar, RS: IntVar](
+        reads: tl.PointerTable[Groups, Literal["read"]],
+        writes: tl.PointerTable[Groups, Literal["write"]],
+        group: int,
+        rows: tl.RowAddress[BM, RS],
+        columns: tl.ColumnAxisOffsets[BN],
+        tile: tl.tensor[[BM, BN]],
+    ) -> None:
+        input_ptrs = tl.load(reads + group).to(tl.pointer_type(tl.float16)) + rows
+        output_ptrs = tl.load(writes + group).to(tl.pointer_type(tl.float16)) + rows
+        assert_type(
+            input_ptrs + columns,
+            tl.InTilePointers[[int, int], [RS, 1], [BM, BN], Literal["indirect"]],
+        )
+        assert_type(tl.load(input_ptrs + columns), tl.tensor[[BM, BN]])
+        tl.store(output_ptrs + columns, tile)
+
     def check_problem[M: IntVar, K: IntVar, N: IntVar, Other: IntVar](
         a: torch.Tensor[[M, K]],
         b: torch.Tensor[[K, N]],
@@ -247,26 +264,28 @@ if TYPE_CHECKING:
         checked_problem(a, wrong)  # pyrefly: ignore[bad-argument-type]
 
     def check_tile[Rows: IntVar, Inner: IntVar, Cols: IntVar, Other: IntVar](
-        a: tl.GroupATilePointers[Rows, Inner],
-        b: tl.GroupBTilePointers[Inner, Cols],
-        bad_b: tl.GroupBTilePointers[Other, Cols],
-        c: tl.GroupCTilePointers[Rows, Cols],
+        a: tl.InTilePointers[[int, int], [int, 1], [Rows, Inner], Literal["indirect"]],
+        b: tl.InTilePointers[[int, int], [int, 1], [Inner, Cols], Literal["indirect"]],
+        bad_b: tl.InTilePointers[
+            [int, int], [int, 1], [Other, Cols], Literal["indirect"]
+        ],
+        c: tl.OutTilePointers[[int, int], [int, 1], [Rows, Cols], Literal["indirect"]],
     ) -> None:
         tl.store(c, tl.dot(tl.load(a), tl.load(b)))
         tl.dot(tl.load(a), tl.load(bad_b))  # pyrefly: ignore[bad-argument-type]
 
     def check_roles[Groups: IntVar](
-        a: tl.GroupAPointers[Groups],
-        b: tl.GroupBPointers[Groups],
-        c: tl.GroupCPointers[Groups],
-        sizes: tl.GroupSizes[Groups],
-        strides: tl.GroupLeadingDimensions[Groups],
+        a: tl.PointerTable[Groups, Literal["read"]],
+        b: tl.PointerTable[Groups, Literal["read"]],
+        c: tl.PointerTable[Groups, Literal["write"]],
+        sizes: tl.PackedIntTable[Groups, 3],
+        strides: tl.PackedIntTable[Groups, 3],
         count: Int[Groups],
     ) -> None:
         grouped_matmul_kernel(a, b, c, sizes, strides, count, 2, 16, 16, 16)
         grouped_matmul_kernel(
             a,
-            a,  # pyrefly: ignore[bad-argument-type]
+            c,  # pyrefly: ignore[bad-argument-type]
             c,
             sizes,
             strides,

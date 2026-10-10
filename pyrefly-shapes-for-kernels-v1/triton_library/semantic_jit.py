@@ -56,7 +56,7 @@ def strip_semantic_annotations[F: Callable[..., object]](fn: F) -> F:
 
 
 def _triton_source(source: str) -> str:
-    """Erase parameter annotations without changing executable kernel statements."""
+    """Erase annotations without changing executable kernel statements."""
     tree = ast.parse(source)
     function = tree.body[0]
     assert isinstance(function, ast.FunctionDef)
@@ -89,6 +89,17 @@ def _triton_source(source: str) -> str:
         replacement = ": tl.constexpr" if is_constexpr else ""
         replacement += "\n" * source[start:end].count("\n")
         edits.append((start, end, replacement))
+    if function.returns is not None:
+        assert function.returns.end_lineno is not None
+        assert function.returns.end_col_offset is not None
+        end = position(function.returns.end_lineno, function.returns.end_col_offset)
+        start = source.rfind(
+            "->", 0, position(function.returns.lineno, function.returns.col_offset)
+        )
+        assert start >= 0
+        while start > 0 and source[start - 1] in " \t":
+            start -= 1
+        edits.append((start, end, "\\\n" * source[start:end].count("\n")))
     for start, end, replacement in reversed(edits):
         source = source[:start] + replacement + source[end:]
     return source

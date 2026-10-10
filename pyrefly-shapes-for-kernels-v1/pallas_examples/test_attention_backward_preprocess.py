@@ -23,8 +23,8 @@ QueryBlock = IntVar("QueryBlock")
 
 # Body copied from JAX's jax/experimental/pallas/ops/gpu/attention.py.
 def _preprocess_backward_kernel(
-    out_ref: pl.MhaPreprocessRef[QueryBlock, PaddedDim, HeadDim],
-    dout_ref: pl.MhaPreprocessRef[QueryBlock, PaddedDim, HeadDim],
+    out_ref: pl.ValidInRef[[QueryBlock, PaddedDim], [QueryBlock, HeadDim]],
+    dout_ref: pl.ValidInRef[[QueryBlock, PaddedDim], [QueryBlock, HeadDim]],
     delta_ref: pl.OutRef[[QueryBlock]],
     head_dim: Int[HeadDim],
 ):
@@ -39,7 +39,12 @@ def _preprocess_backward_kernel(
 
 
 def attention_backward_delta[
-    B: IntVar, Q: IntVar, H: IntVar, D: IntVar, P: IntVar, BQ: IntVar
+    B: IntVar,
+    Q: IntVar,
+    H: IntVar,
+    D: IntVar,
+    P: IntVar,
+    BQ: IntVar,
 ](
     out: jax.Array[[B, Q, H, D]],
     dout: jax.Array[[B, Q, H, D]],
@@ -51,8 +56,8 @@ def attention_backward_delta[
     batch, queries, heads, dim = out.shape
 
     def kernel(
-        out_ref: pl.MhaPreprocessRef[BQ, P, D],
-        dout_ref: pl.MhaPreprocessRef[BQ, P, D],
+        out_ref: pl.ValidInRef[[BQ, P], [BQ, D]],
+        dout_ref: pl.ValidInRef[[BQ, P], [BQ, D]],
         delta_ref: pl.OutRef[[BQ]],
     ) -> None:
         _preprocess_backward_kernel(out_ref, dout_ref, delta_ref, dim)
@@ -96,6 +101,16 @@ class AttentionBackwardPreprocessTest(unittest.TestCase):
 
 
 if TYPE_CHECKING:
+
+    def typed_padded_load[Q: IntVar, P: IntVar, D: IntVar, Other: IntVar](
+        ref: pl.ValidInRef[[Q, P], [Q, D]],
+        correct: pl.Mask[[1, P], [1, D]],
+        wrong: pl.Mask[[1, P], [1, Other]],
+        wrong_axis: pl.Mask[[P, 1], [D, 1]],
+    ) -> None:
+        plgpu.load(ref, mask=correct, other=0.0)
+        plgpu.load(ref, mask=wrong, other=0.0)  # pyrefly: ignore[no-matching-overload]
+        plgpu.load(ref, mask=wrong_axis, other=0.0)  # pyrefly: ignore[no-matching-overload]
 
     def typed_boundary[B: IntVar, Q: IntVar, H: IntVar, D: IntVar, Other: IntVar](
         out: jax.Array[[B, Q, H, D]],

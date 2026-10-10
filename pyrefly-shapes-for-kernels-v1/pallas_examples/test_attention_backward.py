@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 import unittest
-from typing import TYPE_CHECKING, Any, assert_type, cast
+from typing import TYPE_CHECKING, Any, Literal, assert_type, cast
 
 import jax
 import jax.nn as jnn
@@ -36,18 +36,18 @@ KeyBlockDq = IntVar("KeyBlockDq")
 
 def mha_backward_kernel(
     # Inputs
-    q_ref: pl.MhaBackwardMatrixRef[Queries, Padded, Dim],
-    k_ref: pl.MhaBackwardMatrixRef[Keys, Padded, Dim],
-    v_ref: pl.MhaBackwardMatrixRef[Keys, Padded, Dim],
+    q_ref: pl.ValidInRef[[Queries, Padded], [Queries, Dim]],
+    k_ref: pl.ValidInRef[[Keys, Padded], [Keys, Dim]],
+    v_ref: pl.ValidInRef[[Keys, Padded], [Keys, Dim]],
     segment_ids_ref: pl.MhaSegmentRef[Keys] | None,
-    out_ref: pl.MhaBackwardMatrixRef[Queries, Padded, Dim],
-    do_scaled_ref: pl.MhaBackwardMatrixRef[Queries, Padded, Dim],
-    lse_ref: pl.MhaBackwardVectorRef[Queries],
-    delta_ref: pl.MhaBackwardVectorRef[Queries],
+    out_ref: pl.ValidInRef[[Queries, Padded], [Queries, Dim]],
+    do_scaled_ref: pl.ValidInRef[[Queries, Padded], [Queries, Dim]],
+    lse_ref: pl.InRef[[Queries]],
+    delta_ref: pl.InRef[[Queries]],
     # Outputs
-    dq_ref: pl.MhaBackwardOutputRef[QueryBlockDq, Padded],
-    dk_ref: pl.MhaBackwardOutputRef[KeyBlockDkv, Padded],
-    dv_ref: pl.MhaBackwardOutputRef[KeyBlockDkv, Padded],
+    dq_ref: pl.ValidOutRef[[QueryBlockDq, Padded], [QueryBlockDq, Dim]],
+    dk_ref: pl.ValidOutRef[[KeyBlockDkv, Padded], [KeyBlockDkv, Dim]],
+    dv_ref: pl.ValidOutRef[[KeyBlockDkv, Padded], [KeyBlockDkv, Dim]],
     *,
     sm_scale: float,
     causal: bool,
@@ -236,17 +236,17 @@ def attention_backward[
         raise ValueError("Key and segment coverage must include every query")
 
     def kernel(
-        q_ref: pl.MhaBackwardMatrixRef[Q, P, D],
-        k_ref: pl.MhaBackwardMatrixRef[K, P, D],
-        v_ref: pl.MhaBackwardMatrixRef[K, P, D],
+        q_ref: pl.ValidInRef[[Q, P], [Q, D]],
+        k_ref: pl.ValidInRef[[K, P], [K, D]],
+        v_ref: pl.ValidInRef[[K, P], [K, D]],
         segment_ref: pl.MhaSegmentRef[K] | None,
-        out_ref: pl.MhaBackwardMatrixRef[Q, P, D],
-        do_ref: pl.MhaBackwardMatrixRef[Q, P, D],
-        lse_ref: pl.MhaBackwardVectorRef[Q],
-        delta_ref: pl.MhaBackwardVectorRef[Q],
-        dq_ref: pl.MhaBackwardOutputRef[BQDQ, P],
-        dk_ref: pl.MhaBackwardOutputRef[BKVDKV, P],
-        dv_ref: pl.MhaBackwardOutputRef[BKVDKV, P],
+        out_ref: pl.ValidInRef[[Q, P], [Q, D]],
+        do_ref: pl.ValidInRef[[Q, P], [Q, D]],
+        lse_ref: pl.InRef[[Q]],
+        delta_ref: pl.InRef[[Q]],
+        dq_ref: pl.ValidOutRef[[BQDQ, P], [BQDQ, D]],
+        dk_ref: pl.ValidOutRef[[BKVDKV, P], [BKVDKV, D]],
+        dv_ref: pl.ValidOutRef[[BKVDKV, P], [BKVDKV, D]],
     ) -> None:
         mha_backward_kernel(
             q_ref,
@@ -497,6 +497,45 @@ class AttentionBackwardTest(unittest.TestCase):
 
 if TYPE_CHECKING:
 
+    def check_selected_valid_bounds[
+        Rows: IntVar,
+        Block: IntVar,
+        Padded: IntVar,
+        HeadDim: IntVar,
+        Other: IntVar,
+    ](
+        source: pl.ValidInRef[[Rows, Padded], [Rows, HeadDim]],
+        output: pl.ValidOutRef[[Block, Padded], [Block, HeadDim]],
+        block: Int[Block],
+        padded: Int[Padded],
+        value: pl.Tile[[Block, Padded]],
+        correct: pl.Mask[[1, Padded], [1, HeadDim]],
+        wrong_bound: pl.Mask[[1, Padded], [1, Other]],
+        wrong_axis: pl.Mask[[Padded, 1], [HeadDim, 1]],
+        padded_lanes: pl.Mask[[1, Padded], [1, Padded]],
+    ) -> None:
+        selected = source.at[pl.dslice(0, block), :]
+        out_tile = output.at[:, :padded]
+        assert_type(
+            selected,
+            pl.TransformedRef[
+                [Rows, Padded], [Block, Padded], Literal["in"], [Rows, HeadDim]
+            ],
+        )
+        assert_type(
+            out_tile,
+            pl.TransformedRef[
+                [Block, Padded], [Block, Padded], Literal["out"], [Block, HeadDim]
+            ],
+        )
+        plgpu.load(selected, mask=correct, other=0.0)
+        plgpu.store(out_tile, value, mask=correct)
+        plgpu.load(selected, mask=wrong_bound, other=0.0)  # pyrefly: ignore[no-matching-overload]
+        plgpu.load(selected, mask=wrong_axis, other=0.0)  # pyrefly: ignore[no-matching-overload]
+        plgpu.store(out_tile, value, mask=wrong_bound)  # pyrefly: ignore[no-matching-overload]
+        plgpu.store(out_tile, value, mask=wrong_axis)  # pyrefly: ignore[no-matching-overload]
+        plgpu.store(out_tile, value, mask=padded_lanes)  # pyrefly: ignore[no-matching-overload]
+
     def typed_matrix_initializer[Rows: IntVar, Cols: IntVar](
         rows: Int[Rows], cols: Int[Cols]
     ) -> None:
@@ -506,7 +545,12 @@ if TYPE_CHECKING:
         )
 
     def typed_host_boundary[
-        B: IntVar, Q: IntVar, K: IntVar, H: IntVar, D: IntVar, Other: IntVar
+        B: IntVar,
+        Q: IntVar,
+        K: IntVar,
+        H: IntVar,
+        D: IntVar,
+        Other: IntVar,
     ](
         q: jax.Array[[B, Q, H, D]],
         k: jax.Array[[B, K, H, D]],

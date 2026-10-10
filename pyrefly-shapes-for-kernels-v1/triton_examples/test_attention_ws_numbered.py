@@ -46,6 +46,7 @@ import torch
 import triton.language as tl
 from shape_extensions import Int, IntListLiteral, IntVar
 from triton.backends.compiler import GPUTarget
+
 from triton_examples.testing import compile_ttir
 from triton_library import tlt
 from triton_library.launch_layout import attention_preprocess_output
@@ -80,6 +81,19 @@ TokenStride = IntVar("TokenStride")
 FeatureStride = IntVar("FeatureStride")
 SliceFactor = IntVar("SliceFactor")
 
+type _SelectedHeadIn[T: IntVar, D: IntVar, TS: IntVar, FS: IntVar] = (
+    tl.SelectedInPointer[
+        [int, int, T, D],
+        [int, int, TS, FS],
+        [T, D],
+        [TS, FS],
+        Literal["grouped"],
+    ]
+)
+type _SelectedStatsIn[T: IntVar] = tl.SelectedInPointer[
+    [int, int, T], [int, T, 1], [T], [1], Literal["row"]
+]
+
 
 @semantic_jit
 def _attn_fwd_inner(
@@ -87,8 +101,8 @@ def _attn_fwd_inner(
     l_i: tl.tensor[[BM]],
     m_i: tl.tensor[[BM]],
     q: tl.tensor[[BM, D]],  #
-    desc_k: tl.tensor_descriptor[Y, D, D, BN, D],
-    desc_v: tl.tensor_descriptor[Y, D, D, BN, D],  #
+    desc_k: tl.tensor_descriptor[[Y, D], [D, 1], [BN, D], Literal["read_write"]],
+    desc_v: tl.tensor_descriptor[[Y, D], [D, 1], [BN, D], Literal["read_write"]],  #
     offset_y: int,
     dtype: ConstExpr[object],
     start_m: tl.ProgramId[Literal[0]],
@@ -97,8 +111,8 @@ def _attn_fwd_inner(
     HEAD_DIM: ConstExpr[Int[D]],
     BLOCK_N: ConstExpr[Int[BN]],  #
     STAGE: ConstExpr[int],
-    offs_m: tl.Offsets[[BM], 1, str, Literal[0]],
-    offs_n: tl.Offsets[[BN]],  #
+    offs_m: tl.Offsets[[BM], [1], str, Literal[0]],
+    offs_n: tl.Offsets[[BN], [1]],  #
     N_CTX: ConstExpr[Int[NC]],
     warp_specialize: ConstExpr[bool],
     IS_HOPPER: ConstExpr[bool],
@@ -174,11 +188,12 @@ def _attn_fwd_inner(
 
 @semantic_jit
 def _maybe_make_tensor_desc(
-    desc_or_ptr: tl.tensor_descriptor[R, C, S, BR, BC] | tl.AttentionPointer[R, C, S],
+    desc_or_ptr: tl.tensor_descriptor[[R, C], [S, 1], [BR, BC], Literal["read_write"]]
+    | tl.InOutPointer[[R, C], [S, 1]],
     shape: IntListLiteral[[R, C]],
     strides: IntListLiteral[[S, 1]],
     block_shape: IntListLiteral[[BR, BC]],
-) -> tl.tensor_descriptor[R, C, S, BR, BC]:
+) -> tl.tensor_descriptor[[R, C], [S, 1], [BR, BC], Literal["read_write"]]:
     if isinstance(desc_or_ptr, tl.tensor_descriptor):
         return desc_or_ptr
     else:
@@ -190,17 +205,25 @@ def _maybe_make_tensor_desc(
 @semantic_jit
 def _attn_fwd(
     sm_scale: float,
-    M: tl.AttentionStatsPointer[ZDim * HDim, NDim],  #
+    M: tl.OutPointer[[ZDim * HDim, NDim], [NDim, 1]],  #
     Z: ConstExpr[Int[ZDim]],
     H: ConstExpr[Int[HDim]],
-    desc_q: tl.AttentionPointer[ZDim * HDim * NDim, D, D]
-    | tl.tensor_descriptor[ZDim * HDim * NDim, D, D, BM, D],
-    desc_k: tl.AttentionPointer[ZDim * HDim * NDim, D, D]
-    | tl.tensor_descriptor[ZDim * HDim * NDim, D, D, BN, D],
-    desc_v: tl.AttentionPointer[ZDim * HDim * NDim, D, D]
-    | tl.tensor_descriptor[ZDim * HDim * NDim, D, D, BN, D],
-    desc_o: tl.AttentionPointer[ZDim * HDim * NDim, D, D]
-    | tl.tensor_descriptor[ZDim * HDim * NDim, D, D, BM, D],
+    desc_q: tl.InOutPointer[[ZDim * HDim * NDim, D], [D, 1]]
+    | tl.tensor_descriptor[
+        [ZDim * HDim * NDim, D], [D, 1], [BM, D], Literal["read_write"]
+    ],
+    desc_k: tl.InOutPointer[[ZDim * HDim * NDim, D], [D, 1]]
+    | tl.tensor_descriptor[
+        [ZDim * HDim * NDim, D], [D, 1], [BN, D], Literal["read_write"]
+    ],
+    desc_v: tl.InOutPointer[[ZDim * HDim * NDim, D], [D, 1]]
+    | tl.tensor_descriptor[
+        [ZDim * HDim * NDim, D], [D, 1], [BN, D], Literal["read_write"]
+    ],
+    desc_o: tl.InOutPointer[[ZDim * HDim * NDim, D], [D, 1]]
+    | tl.tensor_descriptor[
+        [ZDim * HDim * NDim, D], [D, 1], [BM, D], Literal["read_write"]
+    ],
     N_CTX: ConstExpr[Int[NDim]],  #
     HEAD_DIM: ConstExpr[Int[D]],  #
     BLOCK_M: ConstExpr[Int[BM]],  #
@@ -352,16 +375,16 @@ def _attn_bwd_preprocess(
 def _attn_bwd_dkdv(
     dk: tl.tensor[[BN, Dim]],
     dv: tl.tensor[[BN, Dim]],  #
-    Q: tl.AttentionHeadLocalInputPointer[Tokens, Dim, TokenStride, FeatureStride],
+    Q: _SelectedHeadIn[Tokens, Dim, TokenStride, FeatureStride],
     k: tl.tensor[[BN, Dim]],
     v: tl.tensor[[BN, Dim]],
     sm_scale: float,  #
-    DO: tl.AttentionHeadLocalInputPointer[Tokens, Dim, TokenStride, FeatureStride],  #
-    M: tl.AttentionHeadLocalStatsPointer[Tokens],
-    D: tl.AttentionHeadLocalStatsPointer[Tokens],  #
+    DO: _SelectedHeadIn[Tokens, Dim, TokenStride, FeatureStride],  #
+    M: _SelectedStatsIn[Tokens],
+    D: _SelectedStatsIn[Tokens],  #
     stride_tok: Int[TokenStride],
     stride_d: Int[FeatureStride],  #
-    H: Int[Heads],
+    H: tl.GroupSize[Heads],
     N_CTX: Int[Tokens],
     BLOCK_M1: ConstExpr[Int[BM]],  #
     BLOCK_N1: ConstExpr[Int[BN]],  #
@@ -415,15 +438,15 @@ def _attn_bwd_dkdv(
 def _attn_bwd_dq(
     dq: tl.tensor[[BM, Dim]],
     q: tl.tensor[[BM, Dim]],
-    K: tl.AttentionHeadLocalInputPointer[Tokens, Dim, TokenStride, FeatureStride],
-    V: tl.AttentionHeadLocalInputPointer[Tokens, Dim, TokenStride, FeatureStride],  #
+    K: _SelectedHeadIn[Tokens, Dim, TokenStride, FeatureStride],
+    V: _SelectedHeadIn[Tokens, Dim, TokenStride, FeatureStride],  #
     do: tl.tensor[[BM, Dim]],
     m: tl.tensor[[BM, 1]],
-    D: tl.AttentionHeadLocalStatsPointer[Tokens],
+    D: _SelectedStatsIn[Tokens],
     # shared by Q/K/V/DO.
     stride_tok: Int[TokenStride],
     stride_d: Int[FeatureStride],  #
-    H: Int[Heads],
+    H: tl.GroupSize[Heads],
     N_CTX: Int[Tokens],  #
     BLOCK_M2: ConstExpr[Int[BM]],  #
     BLOCK_N2: ConstExpr[Int[BN]],  #
@@ -482,11 +505,11 @@ def _attn_bwd(
     DV: tlt.OutPointer[[Batch, Heads, Tokens, Dim], [int, int, Dim, 1]],
     M: tlt.InPointer[[Batch, Heads, Tokens], [int, Tokens, 1]],
     D: tlt.InPointer[[Batch, Heads, Tokens], [int, Tokens, 1]],
-    stride_z: tl.AttentionBatchStride[Heads, int],
-    stride_h: tl.AttentionHeadStride[Heads, int],
+    stride_z: tl.AxisStride[Heads, int, Literal["quotient"]],
+    stride_h: tl.AxisStride[Heads, int, Literal["remainder"]],
     stride_tok: Int[Dim],
     stride_d: Int[1],
-    H: tl.AttentionHeadCount[Heads],
+    H: tl.GroupSize[Heads],
     N_CTX: Int[Tokens],
     BLOCK_M1: ConstExpr[Int[BM1]],
     BLOCK_N1: ConstExpr[Int[BN1]],

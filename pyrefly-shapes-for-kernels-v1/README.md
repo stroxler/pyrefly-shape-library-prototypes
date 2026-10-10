@@ -4,6 +4,9 @@ The [v1 assessment](V1_ASSESSMENT.md) summarizes the corpus, the checks
 that bind a Python-facing shape contract to a kernel, and the remaining
 trust boundaries. This is an experimental type system and checked-boundary
 library, not a proof of GPU execution safety or a change to Pyrefly core.
+The [semantic type vocabulary](TYPE_VOCABULARY.md) lists the intended
+fundamental concepts alongside example-specific families still needing
+generalization.
 The [boundary and corpus guide](BOUNDARY_AND_CORPUS.md) suggests an order for
 reading the examples and records remaining example families. The
 [Gluon/CuTe notes](OTHER_KERNEL_DSLS.md) capture insights from those
@@ -175,7 +178,7 @@ ignores unannotated parameters, and checks symbolic integers nested inside
 `ConstExpr[...]`.
 `triton_examples/test_semantic_jit.py` exercises these cases in both JIT and
 interpreter modes. This is not a general annotation evaluator: stub-only
-annotations such as attention's `tl.AttentionPointer` cannot register this
+annotations such as the packed pointer marker cannot register this
 pointer hook. The checked attention host adapter validates its inputs; direct
 launches of that kernel bypass those adapter checks. Checked host adapters
 remain the intended safety boundary in v1.
@@ -190,3 +193,12 @@ semantic operator rules, and runtime-identity wrappers, without changing the
 v1 kernel bodies. A runtime bounds sanitizer could complement static
 checks, but neither that nor static per-lane validity or full grid coverage is
 implemented here.
+
+Pallas `TransformedRef` records the source Ref shape and the selected tile
+shape, but not the selection's symbolic position in the source. A next-pass
+experiment could carry the index expression (including program ID, tile
+origin, and reduction-step dependencies) through Ref selection and compare it
+with grid layouts and masks. That could enable checks for reading the intended
+input region or covering the output tiles, but would require more expressive
+symbolic address analysis than this shape-only prototype provides. This is
+the Pallas counterpart of the missing block-address provenance in Triton.

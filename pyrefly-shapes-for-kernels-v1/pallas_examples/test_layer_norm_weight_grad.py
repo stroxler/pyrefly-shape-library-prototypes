@@ -25,15 +25,15 @@ ColBlock = IntVar("ColBlock")
 
 def layer_norm_backward_kernel_dw_db(
     # Inputs
-    x_ref: pl.LayerNormMatrixRef[Rows, Cols],
-    weight_ref: pl.LayerNormVectorRef[Cols],
-    bias_ref: pl.LayerNormVectorRef[Cols],
-    do_ref: pl.LayerNormMatrixRef[Rows, Cols],
-    mean_ref: pl.LayerNormVectorRef[Rows],
-    rstd_ref: pl.LayerNormVectorRef[Rows],
+    x_ref: pl.InRef[[Rows, Cols]],
+    weight_ref: pl.InRef[[Cols]],
+    bias_ref: pl.InRef[[Cols]],
+    do_ref: pl.InRef[[Rows, Cols]],
+    mean_ref: pl.InRef[[Rows]],
+    rstd_ref: pl.InRef[[Rows]],
     # Outputs
-    dw_ref: pl.LayerNormOutRef[Cols],
-    db_ref: pl.LayerNormOutRef[Cols],
+    dw_ref: pl.OutRef[[Cols]],
+    db_ref: pl.OutRef[[Cols]],
     *,
     eps: float,
     block_m: Int[RowBlock],
@@ -91,14 +91,14 @@ def layer_norm_weight_grad[M: IntVar, N: IntVar, BM: IntVar, BN: IntVar](
     """Bind six host inputs to full Refs and both feature-gradient outputs."""
 
     def kernel(
-        x_ref: pl.LayerNormMatrixRef[M, N],
-        weight_ref: pl.LayerNormVectorRef[N],
-        bias_ref: pl.LayerNormVectorRef[N],
-        do_ref: pl.LayerNormMatrixRef[M, N],
-        mean_ref: pl.LayerNormVectorRef[M],
-        rstd_ref: pl.LayerNormVectorRef[M],
-        dw_ref: pl.LayerNormOutRef[N],
-        db_ref: pl.LayerNormOutRef[N],
+        x_ref: pl.InRef[[M, N]],
+        weight_ref: pl.InRef[[N]],
+        bias_ref: pl.InRef[[N]],
+        do_ref: pl.InRef[[M, N]],
+        mean_ref: pl.InRef[[M]],
+        rstd_ref: pl.InRef[[M]],
+        dw_ref: pl.OutRef[[N]],
+        db_ref: pl.OutRef[[N]],
     ) -> None:
         layer_norm_backward_kernel_dw_db(
             x_ref,
@@ -175,6 +175,18 @@ class LayerNormWeightGradTest(unittest.TestCase):
 
 
 if TYPE_CHECKING:
+
+    def typed_indexed_load[M: IntVar, N: IntVar, Other: IntVar, BM: IntVar, BN: IntVar](
+        x_ref: pl.InRef[[M, N]],
+        row_idx: pl.RowIndices[BM],
+        col_idx: pl.ColumnIndices[BN],
+        correct: pl.Mask[[BM, BN], [M, N]],
+        wrong: pl.Mask[[BM, BN], [Other, N]],
+    ) -> None:
+        plgpu.load(x_ref.at[row_idx, col_idx], mask=correct, other=0.0)
+        plgpu.load(  # pyrefly: ignore[no-matching-overload]
+            x_ref.at[row_idx, col_idx], mask=wrong, other=0.0
+        )
 
     def typed_boundary[M: IntVar, N: IntVar, Other: IntVar](
         x: jax.Array[[M, N]],

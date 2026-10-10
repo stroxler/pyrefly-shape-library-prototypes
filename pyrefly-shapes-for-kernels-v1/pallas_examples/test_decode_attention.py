@@ -40,14 +40,14 @@ DotCols = IntVar("DotCols")
 
 def attn_forward_kernel(
     # inputs
-    q_ref: pl.DecodeQueryRef[HeadBlock, Dim],  # [num_heads, head_dim]
-    k_ref: pl.DecodeKvRef[SplitKeys, Dim],  # [k_seq_len, head_dim]
-    v_ref: pl.DecodeKvRef[SplitKeys, Dim],  # [k_seq_len, head_dim]
-    start_idx_ref: pl.DecodeBoundRef | None,  # [] (i.e., scalar)
-    kv_seq_len_ref: pl.DecodeBoundRef | None,  # [] (i.e., scalar)
+    q_ref: pl.InRef[[HeadBlock, Dim]],  # [num_heads, head_dim]
+    k_ref: pl.InRef[[SplitKeys, Dim]],  # [k_seq_len, head_dim]
+    v_ref: pl.InRef[[SplitKeys, Dim]],  # [k_seq_len, head_dim]
+    start_idx_ref: pl.InRef[[]] | None,  # [] (i.e., scalar)
+    kv_seq_len_ref: pl.InRef[[]] | None,  # [] (i.e., scalar)
     # outputs
-    o_ref: pl.DecodeOutputRef[HeadBlock, Dim],  # [num_heads, head_dim]
-    *residual_refs: pl.DecodeResidualRef[HeadBlock],  # [num_heads,], [num_heads,]
+    o_ref: pl.OutRef[[HeadBlock, Dim]],  # [num_heads, head_dim]
+    *residual_refs: pl.OutRef[[HeadBlock]],  # [num_heads,], [num_heads,]
     sm_scale: float,
     block_k: Int[KeyBlock],
     block_h: Int[HeadBlock],
@@ -222,14 +222,14 @@ def decode_partials[
     )
 
     def kernel(
-        q_ref: pl.DecodeQueryRef[BH, D],
-        k_ref: pl.DecodeKvRef[SK, D],
-        v_ref: pl.DecodeKvRef[SK, D],
-        start_ref: pl.DecodeBoundRef | None,
-        length_ref: pl.DecodeBoundRef | None,
-        out_ref: pl.DecodeOutputRef[BH, D],
-        l_ref: pl.DecodeResidualRef[BH],
-        m_ref: pl.DecodeResidualRef[BH],
+        q_ref: pl.InRef[[BH, D]],
+        k_ref: pl.InRef[[SK, D]],
+        v_ref: pl.InRef[[SK, D]],
+        start_ref: pl.InRef[[]] | None,
+        length_ref: pl.InRef[[]] | None,
+        out_ref: pl.OutRef[[BH, D]],
+        l_ref: pl.OutRef[[BH]],
+        m_ref: pl.OutRef[[BH]],
     ) -> None:
         attn_forward_kernel(
             q_ref,
@@ -364,6 +364,24 @@ class DecodeAttentionTest(unittest.TestCase):
 
 
 if TYPE_CHECKING:
+
+    def check_decode_views[Heads: IntVar, Dim: IntVar, Block: IntVar, Other: IntVar](
+        q_ref: pl.InRef[[Heads, Dim]],
+        out_ref: pl.OutRef[[Heads, Dim]],
+        value: pl.Tile[[Block, Dim]],
+        mask: pl.Mask[[Block, 1], [int, 1]],
+        wrong_mask: pl.Mask[[Other, 1], [int, 1]],
+        block: Int[Block],
+    ) -> None:
+        q_tile = q_ref.at[pl.ds(0, block), :]
+        out_tile = out_ref.at[pl.ds(0, block), :]
+        assert_type(
+            q_tile,
+            pl.TransformedRef[[Heads, Dim], [Block, Dim], Literal["in"]],
+        )
+        plgpu.load(q_tile, mask=mask)
+        plgpu.store(out_tile, value, mask=mask)
+        plgpu.load(q_tile, mask=wrong_mask)  # pyrefly: ignore[no-matching-overload]
 
     def check_decode_result[
         S: IntVar,

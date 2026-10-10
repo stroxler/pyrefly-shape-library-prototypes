@@ -152,8 +152,10 @@ if TYPE_CHECKING:
 
     def typed_addresses[B: IntVar, H: IntVar, T: IntVar, D: IntVar, Other: IntVar](
         output: tlt.InPointer[[B, H, T, D], [int, int, D, 1]],
+        selected: tl.ScaledTileStart[D, T],
         wrong: tl.ScaledTileStart[Other, T],
     ) -> None:
+        assert_type(output + selected, tlt.InPointer[[T, D], [D, 1]])
         output + wrong  # pyrefly: ignore[unsupported-operation]
 
     def typed_boundary[B: IntVar, H: IntVar, T: IntVar, D: IntVar, Other: IntVar](

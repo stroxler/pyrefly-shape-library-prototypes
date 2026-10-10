@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import unittest
-from typing import TYPE_CHECKING, Any, assert_type, cast
+from typing import TYPE_CHECKING, Any, Literal, assert_type, cast
 
 import torch
 import triton.language as tl
@@ -112,9 +112,9 @@ def matmul_kernel(
 
 @semantic_jit
 def matmul_kernel_tma(
-    a_desc: tl.InputMatrixDescriptor[M, K, K, BM, BlockK],
-    b_desc: tl.InputMatrixDescriptor[N, K, K, BlockN, BlockK],
-    c_desc: tl.OutputMatrixDescriptor[M, N, N, BM, BlockN],
+    a_desc: tl.tensor_descriptor[[M, K], [K, 1], [BM, BlockK], Literal["read"]],
+    b_desc: tl.tensor_descriptor[[N, K], [K, 1], [BlockN, BlockK], Literal["read"]],
+    c_desc: tl.tensor_descriptor[[M, N], [N, 1], [BM, BlockN], Literal["write"]],
     M: Int[M],
     N: Int[N],
     K: Int[K],
@@ -159,9 +159,9 @@ def matmul_kernel_tma(
 
 @semantic_jit
 def matmul_kernel_tma_persistent(
-    a_desc: tl.InputMatrixDescriptor[M, K, K, BM, BlockK],
-    b_desc: tl.InputMatrixDescriptor[N, K, K, BlockN, BlockK],
-    c_desc: tl.OutputMatrixDescriptor[M, N, N, BM, int],
+    a_desc: tl.tensor_descriptor[[M, K], [K, 1], [BM, BlockK], Literal["read"]],
+    b_desc: tl.tensor_descriptor[[N, K], [K, 1], [BlockN, BlockK], Literal["read"]],
+    c_desc: tl.tensor_descriptor[[M, N], [N, 1], [BM, int], Literal["write"]],
     M: Int[M],
     N: Int[N],
     K: Int[K],
@@ -518,7 +518,9 @@ if TYPE_CHECKING:
         )
         assert_type(
             desc,
-            tl.tensor_descriptor[Rows, Inner, Inner, BlockRows, BlockInner],
+            tl.tensor_descriptor[
+                [Rows, Inner], [Inner, 1], [BlockRows, BlockInner], Literal["read"]
+            ],
         )
         tl.make_tensor_descriptor(  # pyrefly: ignore[no-matching-overload]
             a,

@@ -81,9 +81,9 @@ def ragged_dot_layout[
         [
             pl.RaggedLhsRef[Rows, Inner],
             pl.RaggedRhsRef[Inner, ColBlock],
-            pl.RaggedBoundRef[Rows],
-            pl.RaggedBoundRef[Rows],
-            pl.RaggedOutRef[Rows, Cols, ColBlock],
+            pl.AxisBoundRef[Rows],
+            pl.AxisBoundRef[Rows],
+            pl.ValidOutRef[[Rows, ColBlock], [Rows, Cols]],
         ],
         None,
     ],
@@ -394,14 +394,14 @@ def row_input_gradient_layout[Features: IntVar](
 def layer_norm_weight_gradient_layout[Rows: IntVar, Cols: IntVar](
     kernel: Callable[
         [
-            pl.LayerNormMatrixRef[Rows, Cols],
-            pl.LayerNormVectorRef[Cols],
-            pl.LayerNormVectorRef[Cols],
-            pl.LayerNormMatrixRef[Rows, Cols],
-            pl.LayerNormVectorRef[Rows],
-            pl.LayerNormVectorRef[Rows],
-            pl.LayerNormOutRef[Cols],
-            pl.LayerNormOutRef[Cols],
+            pl.InRef[[Rows, Cols]],
+            pl.InRef[[Cols]],
+            pl.InRef[[Cols]],
+            pl.InRef[[Rows, Cols]],
+            pl.InRef[[Rows]],
+            pl.InRef[[Rows]],
+            pl.OutRef[[Cols]],
+            pl.OutRef[[Cols]],
         ],
         None,
     ],
@@ -461,8 +461,8 @@ def attention_preprocess_layout[
 ](
     kernel: Callable[
         [
-            pl.MhaPreprocessRef[QueryBlock, Padded, Dim],
-            pl.MhaPreprocessRef[QueryBlock, Padded, Dim],
+            pl.ValidInRef[[QueryBlock, Padded], [QueryBlock, Dim]],
+            pl.ValidInRef[[QueryBlock, Padded], [QueryBlock, Dim]],
             pl.OutRef[[QueryBlock]],
         ],
         None,
@@ -540,17 +540,17 @@ def attention_backward_layout[
 ](
     kernel: Callable[
         [
-            pl.MhaBackwardMatrixRef[Queries, Padded, Dim],
-            pl.MhaBackwardMatrixRef[Keys, Padded, Dim],
-            pl.MhaBackwardMatrixRef[Keys, Padded, Dim],
+            pl.ValidInRef[[Queries, Padded], [Queries, Dim]],
+            pl.ValidInRef[[Keys, Padded], [Keys, Dim]],
+            pl.ValidInRef[[Keys, Padded], [Keys, Dim]],
             pl.MhaSegmentRef[Keys] | None,
-            pl.MhaBackwardMatrixRef[Queries, Padded, Dim],
-            pl.MhaBackwardMatrixRef[Queries, Padded, Dim],
-            pl.MhaBackwardVectorRef[Queries],
-            pl.MhaBackwardVectorRef[Queries],
-            pl.MhaBackwardOutputRef[QueryBlockDq, Padded],
-            pl.MhaBackwardOutputRef[KeyBlockDkv, Padded],
-            pl.MhaBackwardOutputRef[KeyBlockDkv, Padded],
+            pl.ValidInRef[[Queries, Padded], [Queries, Dim]],
+            pl.ValidInRef[[Queries, Padded], [Queries, Dim]],
+            pl.InRef[[Queries]],
+            pl.InRef[[Queries]],
+            pl.ValidOutRef[[QueryBlockDq, Padded], [QueryBlockDq, Dim]],
+            pl.ValidOutRef[[KeyBlockDkv, Padded], [KeyBlockDkv, Dim]],
+            pl.ValidOutRef[[KeyBlockDkv, Padded], [KeyBlockDkv, Dim]],
         ],
         None,
     ],
@@ -700,10 +700,10 @@ def attention_layout[
 ](
     kernel: Callable[
         [
-            pl.MhaQueryRef[QueryBlock, Dim],
-            pl.MhaKvRef[Keys, Dim],
-            pl.MhaKvRef[Keys, Dim],
-            pl.MhaOutputRef[QueryBlock, Dim],
+            pl.ValidInRef[[QueryBlock, Dim], [QueryBlock, Dim]],
+            pl.InRef[[Keys, Dim]],
+            pl.InRef[[Keys, Dim]],
+            pl.OutRef[[QueryBlock, Dim]],
             pl.OutRef[[QueryBlock]],
         ],
         None,

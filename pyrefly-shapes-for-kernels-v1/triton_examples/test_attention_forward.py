@@ -45,8 +45,8 @@ def _attn_fwd_inner(
     l_i: tl.tensor[[BM]],
     m_i: tl.tensor[[BM]],
     q: tl.tensor[[BM, D]],  #
-    desc_k: tl.tensor_descriptor[Y, D, D, BN, D],
-    desc_v: tl.tensor_descriptor[Y, D, D, BN, D],  #
+    desc_k: tl.tensor_descriptor[[Y, D], [D, 1], [BN, D], Literal["read_write"]],
+    desc_v: tl.tensor_descriptor[[Y, D], [D, 1], [BN, D], Literal["read_write"]],  #
     offset_y: int,
     dtype: ConstExpr[object],
     start_m: tl.ProgramId[Literal[0]],
@@ -55,8 +55,8 @@ def _attn_fwd_inner(
     HEAD_DIM: ConstExpr[Int[D]],
     BLOCK_N: ConstExpr[Int[BN]],  #
     STAGE: ConstExpr[int],
-    offs_m: tl.Offsets[[BM], 1, str, Literal[0]],
-    offs_n: tl.Offsets[[BN]],  #
+    offs_m: tl.Offsets[[BM], [1], str, Literal[0]],
+    offs_n: tl.Offsets[[BN], [1]],  #
     N_CTX: ConstExpr[Int[NC]],
     warp_specialize: ConstExpr[bool],
     IS_HOPPER: ConstExpr[bool],
@@ -130,11 +130,12 @@ def _attn_fwd_inner(
 
 @semantic_jit
 def _maybe_make_tensor_desc(
-    desc_or_ptr: tl.tensor_descriptor[R, C, S, BR, BC] | tl.AttentionPointer[R, C, S],
+    desc_or_ptr: tl.tensor_descriptor[[R, C], [S, 1], [BR, BC], Literal["read_write"]]
+    | tl.InOutPointer[[R, C], [S, 1]],
     shape: IntListLiteral[[R, C]],
     strides: IntListLiteral[[S, 1]],
     block_shape: IntListLiteral[[BR, BC]],
-) -> tl.tensor_descriptor[R, C, S, BR, BC]:
+) -> tl.tensor_descriptor[[R, C], [S, 1], [BR, BC], Literal["read_write"]]:
     if isinstance(desc_or_ptr, tl.tensor_descriptor):
         return desc_or_ptr
     else:
@@ -144,17 +145,25 @@ def _maybe_make_tensor_desc(
 @semantic_jit
 def _attn_fwd(
     sm_scale: float,
-    M: tl.AttentionStatsPointer[ZDim * HDim, NDim],  #
+    M: tl.OutPointer[[ZDim * HDim, NDim], [NDim, 1]],  #
     Z: ConstExpr[Int[ZDim]],
     H: ConstExpr[Int[HDim]],
-    desc_q: tl.AttentionPointer[ZDim * HDim * NDim, D, D]
-    | tl.tensor_descriptor[ZDim * HDim * NDim, D, D, BM, D],
-    desc_k: tl.AttentionPointer[ZDim * HDim * NDim, D, D]
-    | tl.tensor_descriptor[ZDim * HDim * NDim, D, D, BN, D],
-    desc_v: tl.AttentionPointer[ZDim * HDim * NDim, D, D]
-    | tl.tensor_descriptor[ZDim * HDim * NDim, D, D, BN, D],
-    desc_o: tl.AttentionPointer[ZDim * HDim * NDim, D, D]
-    | tl.tensor_descriptor[ZDim * HDim * NDim, D, D, BM, D],
+    desc_q: tl.InOutPointer[[ZDim * HDim * NDim, D], [D, 1]]
+    | tl.tensor_descriptor[
+        [ZDim * HDim * NDim, D], [D, 1], [BM, D], Literal["read_write"]
+    ],
+    desc_k: tl.InOutPointer[[ZDim * HDim * NDim, D], [D, 1]]
+    | tl.tensor_descriptor[
+        [ZDim * HDim * NDim, D], [D, 1], [BN, D], Literal["read_write"]
+    ],
+    desc_v: tl.InOutPointer[[ZDim * HDim * NDim, D], [D, 1]]
+    | tl.tensor_descriptor[
+        [ZDim * HDim * NDim, D], [D, 1], [BN, D], Literal["read_write"]
+    ],
+    desc_o: tl.InOutPointer[[ZDim * HDim * NDim, D], [D, 1]]
+    | tl.tensor_descriptor[
+        [ZDim * HDim * NDim, D], [D, 1], [BM, D], Literal["read_write"]
+    ],
     N_CTX: ConstExpr[Int[NDim]],  #
     HEAD_DIM: ConstExpr[Int[D]],  #
     BLOCK_M: ConstExpr[Int[BM]],  #

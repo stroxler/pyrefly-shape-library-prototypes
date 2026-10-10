@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import unittest
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, assert_type
 
 import torch
 import triton.language as tl
@@ -47,11 +47,33 @@ BKK = IntVar("BKK")
 
 @semantic_jit
 def block_scaled_matmul_kernel(
-    a_desc: tl.BlockDataDescriptor[MDim, KDim, AElementsPerByte, RepM, RepK, VecSize],
-    a_scale_desc: tl.BlockScaleDescriptor[MDim, KDim, VecSize, RepM, RepK],
-    b_desc: tl.BlockDataDescriptor[NDim, KDim, BElementsPerByte, RepN, RepK, VecSize],
-    b_scale_desc: tl.BlockScaleDescriptor[NDim, KDim, VecSize, RepN, RepK],
-    c_desc: tl.BlockOutputDescriptor[MDim, NDim, RepM * 128, RepN * 128],
+    a_desc: tl.tensor_descriptor[
+        [MDim, KDim // AElementsPerByte],
+        [int, 1],
+        [RepM * 128, RepK * 4 * VecSize // AElementsPerByte],
+        Literal["read"],
+    ],
+    a_scale_desc: tl.tensor_descriptor[
+        [1, MDim // 128, KDim // VecSize // 4, 2, 256],
+        [int, int, int, int, 1],
+        [1, RepM, RepK, 2, 256],
+        Literal["read"],
+    ],
+    b_desc: tl.tensor_descriptor[
+        [NDim, KDim // BElementsPerByte],
+        [int, 1],
+        [RepN * 128, RepK * 4 * VecSize // BElementsPerByte],
+        Literal["read"],
+    ],
+    b_scale_desc: tl.tensor_descriptor[
+        [1, NDim // 128, KDim // VecSize // 4, 2, 256],
+        [int, int, int, int, 1],
+        [1, RepN, RepK, 2, 256],
+        Literal["read"],
+    ],
+    c_desc: tl.tensor_descriptor[
+        [MDim, NDim], [NDim, 1], [RepM * 128, RepN * 128], Literal["write"]
+    ],
     M: ConstExpr[Int[MDim]],
     N: ConstExpr[Int[NDim]],
     K: ConstExpr[Int[KDim]],
@@ -134,11 +156,31 @@ def block_scaled_matmul_kernel(
 
 @semantic_jit
 def block_scaled_matmul_kernel_cdna4(
-    a_ptr: tl.CDNA4PackedAPointer[MDim, KDim, AM, AK, BM, BKK],
-    b_ptr: tl.CDNA4PackedBPointer[KDim, NDim, BStrideK, BN, BNN, BKK],
+    a_ptr: tl.PackedPointer[
+        [MDim, KDim], [MDim, KDim // 2], [AM, AK], [BM, BKK], Literal["packed_last"]
+    ],
+    b_ptr: tl.PackedPointer[
+        [KDim, NDim],
+        [KDim // 2, NDim],
+        [BStrideK, BN],
+        [BNN, BKK],
+        Literal["packed_first"],
+    ],
     c_ptr: OutPointer[[MDim, NDim], [CM, CN]],
-    a_scales_ptr: tl.CDNA4ScalePointer[MDim, KDim, ASM, ASK, BM, BKK],
-    b_scales_ptr: tl.CDNA4ScalePointer[NDim, KDim, BSN, BSK, BNN, BKK],
+    a_scales_ptr: tl.PackedPointer[
+        [MDim, KDim],
+        [MDim // 32, 2 * KDim],
+        [ASM, ASK],
+        [BM, BKK],
+        Literal["shuffled_scale"],
+    ],
+    b_scales_ptr: tl.PackedPointer[
+        [NDim, KDim],
+        [NDim // 32, 2 * KDim],
+        [BSN, BSK],
+        [BNN, BKK],
+        Literal["shuffled_scale"],
+    ],
     M: Int[MDim],
     N: Int[NDim],
     K: Int[KDim],
@@ -535,6 +577,64 @@ class BlockScaledMatmulTest(unittest.TestCase):
 
 if TYPE_CHECKING:
 
+    def check_packed_scale_transform[BR: IntVar, BK: IntVar](
+        tile: tl.PackedScaleTile[[BR, BK], [BR // 32, BK], Literal["loaded"]],
+        row_groups: Int[BR // 32],
+        rows: Int[BR],
+        k_groups: int,
+        scales: int,
+    ) -> None:
+        reshaped = tile.reshape(row_groups, k_groups, 2, 32, 4, 1)
+        assert_type(
+            reshaped,
+            tl.PackedScaleTile[
+                [BR, BK], [BR // 32, int, 2, 32, 4, 1], Literal["mfma32"]
+            ],
+        )
+        assert_type(
+            reshaped.permute(0, 3, 1, 4, 2, 5).reshape(rows, scales),
+            tl.tensor[[BR, BK // 32]],
+        )
+        reshaped.permute(0, 1, 2, 3, 4, 5)  # pyrefly: ignore[bad-argument-type]
+        tile.reshape(rows, scales)  # pyrefly: ignore[no-matching-overload]
+
+    def check_packed_address[
+        Rows: IntVar,
+        K: IntVar,
+        BR: IntVar,
+        BK: IntVar,
+        RS: IntVar,
+        KS: IntVar,
+        Other: IntVar,
+    ](
+        operand: tl.PackedPointer[
+            [Rows, K], [Rows, K // 2], [RS, KS], [BR, BK], Literal["packed_last"]
+        ],
+        wrong_layout: tl.PackedPointer[
+            [Rows, K], [Rows, K // 2], [RS, KS], [BR, BK], Literal["packed_first"]
+        ],
+        address: tl.BoundedAddress[
+            Rows, [BR, BK // 2], [RS, KS], Literal["wrapped"], Literal[0]
+        ],
+        wrong_stride: tl.BoundedAddress[
+            Rows, [BR, BK // 2], [RS, Other], Literal["wrapped"], Literal[0]
+        ],
+        step: Int[(BK // 2) * KS],
+        wrong_step: Int[BK * KS],
+    ) -> None:
+        pointers = operand + address
+        assert_type(
+            pointers,
+            tl.PackedTilePointers[
+                [Rows, K], [Rows, K // 2], [RS, KS], [BR, BK], Literal["packed_last"]
+            ],
+        )
+        assert_type(tl.load(pointers), tl.tensor[[BR, BK // 2]])
+        pointers.__iadd__(step)
+        pointers.__iadd__(wrong_step)  # pyrefly: ignore[no-matching-overload]
+        operand + wrong_stride  # pyrefly: ignore[unsupported-operation]
+        wrong_layout + address  # pyrefly: ignore[unsupported-operation]
+
     def check_output_tile[
         Rows: IntVar,
         Cols: IntVar,
@@ -542,9 +642,35 @@ if TYPE_CHECKING:
         BN: IntVar,
         Other: IntVar,
     ](
-        output: tl.BlockOutputDescriptor[Rows, Cols, BM, BN],
+        input_desc: tl.tensor_descriptor[
+            [Rows, Cols], [Cols, 1], [BM, BN], Literal["read"]
+        ],
+        output: tl.tensor_descriptor[
+            [Rows, Cols], [Cols, 1], [BM, BN], Literal["write"]
+        ],
         good: tl.tensor[[BM, BN]],
         wrong: tl.tensor[[BM, Other]],
+        wrong_start: tl.GroupStart[int, Other],
     ) -> None:
+        input_desc.load([0, 0])
         output.store([0, 0], good)
-        output.store([0, 0], wrong)  # pyrefly: ignore[bad-argument-type]
+        output.store([0, 0], wrong)  # pyrefly: ignore[no-matching-overload]
+        input_desc.store([0, 0], good)  # pyrefly: ignore[no-matching-overload]
+        output.load([0, 0])  # pyrefly: ignore[no-matching-overload]
+        input_desc.load([wrong_start, 0])  # pyrefly: ignore[no-matching-overload]
+        output.store([wrong_start, 0], good)  # pyrefly: ignore[no-matching-overload]
+
+    def check_scale_offset_step[BR: IntVar, BK: IntVar, Other: IntVar](
+        scale: tl.tensor_descriptor[
+            [1, int, int, 2, 256],
+            [int, int, int, int, 1],
+            [1, BR, BK, 2, 256],
+            Literal["read"],
+        ],
+        good_start: tl.GroupStart[int, BR],
+        wrong_start: tl.GroupStart[int, Other],
+    ) -> None:
+        assert_type(
+            scale.load([0, good_start, 0, 0, 0]), tl.tensor[[1, BR, BK, 2, 256]]
+        )
+        scale.load([0, wrong_start, 0, 0, 0])  # pyrefly: ignore[no-matching-overload]

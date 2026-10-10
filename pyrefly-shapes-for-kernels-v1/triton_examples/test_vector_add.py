@@ -254,8 +254,19 @@ if TYPE_CHECKING:
     ) -> None:
         offsets_0 = tl.program_id(0) * width + tl.arange(0, width)
         offsets_1 = tl.program_id(1) * width + tl.arange(0, width)
-        assert_type(offsets_0, tl.Offsets[[Width], 1, Literal["program"], Literal[0]])
-        assert_type(offsets_1, tl.Offsets[[Width], 1, Literal["program"], Literal[1]])
+        assert_type(offsets_0, tl.Offsets[[Width], [1], Literal["program"], Literal[0]])
+        assert_type(offsets_1, tl.Offsets[[Width], [1], Literal["program"], Literal[1]])
+        assert_type(
+            offsets_0 < length,
+            tl.Mask[[Length], [Width], Literal["program"], Literal[0]],
+        )
+        assert_type(
+            offsets_1 < length,
+            tl.Mask[[Length], [Width], Literal["program"], Literal[1]],
+        )
+        wrong_tag: tl.Mask[[Length], [Width], Literal["program"], Literal[0]] = (
+            offsets_1 < length  # pyrefly: ignore[bad-assignment]
+        )
         values = tl.load(pointer + offsets_0, mask=offsets_0 < length)
         tl.store(output + offsets_0, values, mask=offsets_0 < length)
         tl.load(  # pyrefly: ignore[no-matching-overload]

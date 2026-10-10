@@ -15,21 +15,21 @@ from triton_library import host_tensor, tlt
 def checked_attention_input[Batch: IntVar, Heads: IntVar, Tokens: IntVar, Dim: IntVar](
     tensor: torch.Tensor[[Batch, Heads, Tokens, Dim]],
     shape: tuple[Int[Batch], Int[Heads], Int[Tokens], Int[Dim]],
-) -> tl.AttentionPointer[Batch * Heads * Tokens, Dim, Dim]:
+) -> tlt.InOutPointer[[Batch * Heads * Tokens, Dim], [Dim, 1]]:
     """Present a contiguous four-axis host tensor as a flattened descriptor input."""
     if tensor.ndim != 4 or tuple(tensor.shape) != shape or not tensor.is_contiguous():
         raise ValueError("Attention input must match the contiguous host axes")
-    return cast("tl.AttentionPointer[Batch * Heads * Tokens, Dim, Dim]", tensor)
+    return cast("tlt.InOutPointer[[Batch * Heads * Tokens, Dim], [Dim, 1]]", tensor)
 
 
 def checked_attention_stats[Batch: IntVar, Heads: IntVar, Tokens: IntVar](
     tensor: torch.Tensor[[Batch, Heads, Tokens]],
     shape: tuple[Int[Batch], Int[Heads], Int[Tokens]],
-) -> tl.AttentionStatsPointer[Batch * Heads, Tokens]:
+) -> tlt.OutPointer[[Batch * Heads, Tokens], [Tokens, 1]]:
     """Present contiguous per-query log-sum-exp as a flattened stats pointer."""
     if tensor.ndim != 3 or tuple(tensor.shape) != shape or not tensor.is_contiguous():
         raise ValueError("Attention statistics must match contiguous host axes")
-    return cast("tl.AttentionStatsPointer[Batch * Heads, Tokens]", tensor)
+    return cast("tlt.OutPointer[[Batch * Heads, Tokens], [Tokens, 1]]", tensor)
 
 
 def checked_attention_backward_input[

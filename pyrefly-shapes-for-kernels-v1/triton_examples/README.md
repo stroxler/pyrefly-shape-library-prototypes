@@ -44,8 +44,8 @@ enforces compatible FP16 shapes, positive
 input strides and block sizes, but it does not prove that `_compute_pid`
 visits every output tile exactly once or that each K iteration advances the
 correct allocation. Distinct strides remain tied to the pointer views; the
-`StridedMatrixAddress` used for output addresses is a general address
-construction, not a matrix-specific allocation type.
+output addresses use `Offsets` with both tile shape and address steps,
+not a matrix-specific allocation type.
 
 `test_persistent_matmul_variants.py` contains tutorial 09's nonpersistent,
 host-descriptor TMA, persistent TMA, and device-descriptor persistent kernels.
@@ -67,11 +67,13 @@ of differing shapes. The list of different problem dimensions is necessarily
 heterogeneous: static checking establishes each pair's relationship but
 cannot currently express the value-dependent contents of the packed size and
 pointer arrays, nor prove the kernel's dynamic group/tile scheduling. The
-kernel-side group-address classes retain separate A/B/C roles from the v0
-stubs; they should eventually be replaced by a composable indirect-pointer
-model rather than more named matrix types. The launch converts validated
-Torch allocations to those roles, but that role conversion is not itself
-checked against the pointer-of-pointer stubs.
+kernel represents A and B as read-only pointer tables and C as a writable
+pointer table. Loading one table entry produces an indirect pointer with
+gradual per-problem dimensions and row stride; its tile shape remains checked
+through generic pointer arrays and `tl.dot`. A and B are physically
+indistinguishable tables, so their ordering is checked by the host adapter,
+not by distinct kernel-side types. The launch casts validated Torch arrays
+to these table types; those casts do not independently validate their contents.
 
 `test_grouped_gemm_tma.py` retains tutorial 08's second kernel, whose TMA
 descriptors load A as `[M,K]` and B as `[N,K]`, then transpose the B tile
@@ -175,8 +177,8 @@ does **not** prove GPU lowering or execution: no end-to-end GPU numerical
 test was run, and Triton's descriptor kernel cannot be executed
 in our CPU interpreter. The adapter deliberately requires equal Q and K
 sequence lengths and whole blocks, since the kernel makes unmasked descriptor
-loads and stores. The `tl.AttentionPointer` and stats-pointer types remain
-stub-only views; the conversion functions return the original Torch tensors
+loads and stores. The generic `tl.InOutPointer` and `tl.OutPointer` types
+remain stub-only annotations; the conversion functions return the original Torch tensors
 after checking shape and contiguity. Direct unvalidated GPU launches bypass
 these host checks. Three expected body diagnostics remain suppressed in the
 FP8/warp-specialized paths (reshape/join and transposed dot); the v1 stubs

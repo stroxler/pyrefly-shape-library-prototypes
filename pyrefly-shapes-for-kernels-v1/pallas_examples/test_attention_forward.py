@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 import unittest
-from typing import TYPE_CHECKING, Any, assert_type, cast
+from typing import TYPE_CHECKING, Any, Literal, assert_type, cast
 
 import jax
 import jax.lax as lax
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
     def segment_mask[Q: IntVar, K: IntVar](
         q_segment_ids: jax.Array[[Q]], kv_segment_ids: jax.Array[[K]]
-    ) -> pl.MhaMask[Q, K]: ...
+    ) -> pl.Mask[[Q, K], [int, int]]: ...
 
 
 else:
@@ -48,11 +48,11 @@ else:
 
 
 def mha_forward_kernel(
-    q_ref: pl.MhaQueryRef[QueryBlock, Dim],
-    k_ref: pl.MhaKvRef[Keys, Dim],
-    v_ref: pl.MhaKvRef[Keys, Dim],  # Input arrays
+    q_ref: pl.ValidInRef[[QueryBlock, Dim], [QueryBlock, Dim]],
+    k_ref: pl.InRef[[Keys, Dim]],
+    v_ref: pl.InRef[[Keys, Dim]],  # Input arrays
     segment_ids_ref: pl.MhaSegmentRef[Keys] | None,  # segment_id arrays
-    o_ref: pl.MhaOutputRef[QueryBlock, Dim],  # Output
+    o_ref: pl.OutRef[[QueryBlock, Dim]],  # Output
     *residual_refs: pl.OutRef[[QueryBlock]],  # Residual outputs
     sm_scale: float,
     causal: bool,
@@ -199,10 +199,10 @@ def attention_forward[
         raise ValueError("Query and key/value axes must match")
 
     def kernel(
-        q_ref: pl.MhaQueryRef[BQ, D],
-        k_ref: pl.MhaKvRef[K, D],
-        v_ref: pl.MhaKvRef[K, D],
-        out_ref: pl.MhaOutputRef[BQ, D],
+        q_ref: pl.ValidInRef[[BQ, D], [BQ, D]],
+        k_ref: pl.InRef[[K, D]],
+        v_ref: pl.InRef[[K, D]],
+        out_ref: pl.OutRef[[BQ, D]],
         lse_ref: pl.OutRef[[BQ]],
     ) -> None:
         mha_forward_kernel(
@@ -275,10 +275,10 @@ class AttentionForwardTest(unittest.TestCase):
 
     def test_reject_mismatched_grid_and_statistics_axes(self) -> None:
         def kernel(
-            q_ref: pl.MhaQueryRef[2, 16],
-            k_ref: pl.MhaKvRef[4, 16],
-            v_ref: pl.MhaKvRef[4, 16],
-            out_ref: pl.MhaOutputRef[2, 16],
+            q_ref: pl.ValidInRef[[2, 16], [2, 16]],
+            k_ref: pl.InRef[[4, 16]],
+            v_ref: pl.InRef[[4, 16]],
+            out_ref: pl.OutRef[[2, 16]],
             stats_ref: pl.OutRef[[2]],
         ) -> None:
             pass
@@ -311,6 +311,40 @@ class AttentionForwardTest(unittest.TestCase):
 
 
 if TYPE_CHECKING:
+
+    def check_ref_feature_masks[
+        Q: IntVar,
+        K: IntVar,
+        D: IntVar,
+        Block: IntVar,
+        Other: IntVar,
+    ](
+        query: pl.ValidInRef[[Q, D], [Q, D]],
+        keys: pl.InRef[[K, D]],
+        output: pl.OutRef[[Q, D]],
+        values: pl.Tile[[Q, D]],
+        key_block: Int[Block],
+        feature_mask: pl.Mask[[1, D], [1, D]],
+        wrong_bound: pl.Mask[[1, D], [1, Other]],
+        wrong_axis: pl.Mask[[D, 1], [D, 1]],
+    ) -> None:
+        key_tile = keys.at[pl.dslice(0, key_block), :]
+        output_tile = output.at[:, : output.shape[-1]]
+        assert_type(
+            key_tile,
+            pl.TransformedRef[[K, D], [Block, D], Literal["in"]],
+        )
+        assert_type(
+            output_tile,
+            pl.TransformedRef[[Q, D], [Q, D], Literal["out"]],
+        )
+        plgpu.load(query, mask=feature_mask, other=0.0)
+        plgpu.load(key_tile, mask=feature_mask)
+        plgpu.store(output_tile, values, mask=feature_mask)
+        plgpu.load(query, mask=wrong_bound, other=0.0)  # pyrefly: ignore[no-matching-overload]
+        plgpu.load(key_tile, mask=wrong_bound)  # pyrefly: ignore[no-matching-overload]
+        plgpu.load(key_tile, mask=wrong_axis)  # pyrefly: ignore[no-matching-overload]
+        plgpu.store(output_tile, values, mask=wrong_bound)  # pyrefly: ignore[no-matching-overload]
 
     def typed_attention[
         B: IntVar,

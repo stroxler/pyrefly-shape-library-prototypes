@@ -52,6 +52,12 @@ partial reduction blocks. The CPU adapter rejects partial output-column
 blocks because JAX's CPU interpreter cannot lower the `program_id` reached
 through the upstream conditional store-mask branch; this is an interpreter
 restriction, not a proof that the GPU kernel cannot handle those columns.
+Its output block carries the full valid-column bound even though the visible
+Ref has only one column tile. Static fixtures reject output masks with wrong
+row or column bounds. Its specialized LHS/RHS input slices remain necessary
+because the same slices are loaded with and without masks in separate branches;
+the types cannot prove from the runtime branch that the unmasked loads stay
+within the logical reduction length.
 With `JAX_DISABLE_JIT=1`, eager Ref indexing also rejects the masked final
 contraction slice before the load; the partial-K numerical test is skipped
 only in that mode. Normal CPU interpretation executes the test. Neither mode
@@ -91,12 +97,20 @@ the generic two-matrix `fori_loop` carry then checks both scan accumulators
 and their stores without local suppressions. Index-map lambda values and
 the alignment of externally saved LSE/Delta with the inputs remain outside
 the proof.
+Selected Q/K/V inputs and dQ/dK/dV outputs retain both padded head width and
+the original valid `D` extent in `TransformedRef`. Feature-mask bounds and
+orientation are checked for both loads and stores; a mask that marks the full
+padded width as valid is rejected for the output.
 
 `test_attention_backward_preprocess.py` retains JAX's preprocessing body for
 attention backward. A checked layout binds two `[B,Q,H,D]` inputs to
 `[B,H,Q]` delta and groups the grid as `(Q/block_q,B,H)`. Input BlockSpecs
 select a `[block_q,padded_dim]` logical Ref; the kernel masks feature lanes
 beyond the physical `D`, allowing a non-power-of-two host head dimension.
+The feature mask has type `Mask[[1, padded_dim], [1, D]]`; its singleton row
+axis broadcasts across the query tile, while its valid feature bound matches
+the host head dimension. A mask with the wrong bound or broadcast axis fails
+the static `plgpu.load` check.
 The output BlockSpec reorders the batch/head/query axes, and the checked call
 validates both input arrays. The builder checks the spec shapes and output
 permutation but, as for forward attention, cannot prove arbitrary index-map
@@ -114,8 +128,11 @@ weight/bias-gradient kernel. Its checked layout ties two full `[Rows, Cols]`
 matrix Refs, two `[Cols]` vectors, two `[Rows]` saved statistics, and both
 `[Cols]` outputs to a grid of column tiles. The CPU test covers partial row
 and column tiles and compares against an independent batch reduction. The
-matrix/column Ref classes are still specialized to layer norm in the copied
-overlay; their names are prototype debt, not a new Pallas requirement.
+kernel inputs and outputs use generic shape-parameterized `InRef`/`OutRef`.
+Indexing an input Ref produces a `TransformedRef` carrying both the original
+matrix bounds and the selected tile shape, so a masked load can compare its
+mask against both. The Ref type does not track where within the matrix the
+selection starts.
 
 `test_attention_forward.py` retains JAX's deprecated GPU `mha_forward_kernel`
 and the optional segment-mask helper unchanged, but exercises the noncausal,
@@ -123,6 +140,8 @@ unsegmented branch. `attention_layout` relates Q `[B,Q,H,D]`, K/V `[B,K,H,D]`,
 output `[B,Q,H,D]`, and base-2 log-sum-exp `[B,H,Q]` to a
 `(Q/block_q, B, H)` grid. Its typed callback receives squeezed query
 `[block_q,D]` and full-key/value `[K,D]` Refs plus a `[block_q]` stats Ref.
+The full query read carries an explicit valid extent; key/value and output
+slices use general `TransformedRef` types whose feature masks must match `D`.
 The builder constructs the three input BlockSpecs and both output BlockSpecs;
 the checked call validates the three concrete input shapes and dtypes. The
 CPU-interpreter test compares noncausal attention and log-sum-exp with an

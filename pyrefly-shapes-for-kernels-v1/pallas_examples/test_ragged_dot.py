@@ -33,9 +33,9 @@ Groups = IntVar("Groups")
 def _triton_ragged_dot_kernel(
     a_ref: pl.RaggedLhsRef[Rows, Inner],
     b_ref: pl.RaggedRhsRef[Inner, ColumnBlock],
-    lo_ref: pl.RaggedBoundRef[Rows],
-    hi_ref: pl.RaggedBoundRef[Rows],
-    out_ref: pl.RaggedOutRef[Rows, Columns, ColumnBlock],
+    lo_ref: pl.AxisBoundRef[Rows],
+    hi_ref: pl.AxisBoundRef[Rows],
+    out_ref: pl.ValidOutRef[[Rows, ColumnBlock], [Rows, Columns]],
     *,
     block_m: Int[RowBlock],
     block_k: Int[InnerBlock],
@@ -124,9 +124,9 @@ def grouped_ragged_dot[
     def kernel(
         a_ref: pl.RaggedLhsRef[M, K],
         b_ref: pl.RaggedRhsRef[K, BN],
-        lo_ref: pl.RaggedBoundRef[M],
-        hi_ref: pl.RaggedBoundRef[M],
-        out_ref: pl.RaggedOutRef[M, N, BN],
+        lo_ref: pl.AxisBoundRef[M],
+        hi_ref: pl.AxisBoundRef[M],
+        out_ref: pl.ValidOutRef[[M, BN], [M, N]],
     ) -> None:
         _triton_ragged_dot_kernel(
             a_ref,
@@ -204,6 +204,38 @@ class RaggedDotTest(unittest.TestCase):
 
 
 if TYPE_CHECKING:
+
+    def check_output_rectangle[
+        M: IntVar,
+        N: IntVar,
+        BM: IntVar,
+        BN: IntVar,
+        Other: IntVar,
+    ](
+        output: pl.ValidOutRef[[M, BN], [M, N]],
+        bounds: pl.AxisBoundRef[M],
+        row_block: Int[BM],
+        col_block: Int[BN],
+        row_indices: pl.Indices[BM],
+        values: pl.Tile[[BM, BN]],
+        row_mask: pl.Mask[[BM, 1], [M, 1]],
+        full_mask: pl.Mask[[BM, BN], [M, N]],
+        wrong_row: pl.Mask[[BM, 1], [Other, 1]],
+        wrong_col: pl.Mask[[BM, BN], [M, Other]],
+    ) -> None:
+        assert_type(row_indices < bounds[()], pl.Mask[[BM], [M]])
+        block = output.at[pl.ds(0, row_block), pl.ds(0, col_block)]
+        assert_type(block, pl.RectOutputBlock[BM, M, N, BN])
+        plgpu.store(block, values, mask=row_mask)
+        plgpu.store(block, values, mask=full_mask)
+        plgpu.store(block, values, mask=wrong_row)  # pyrefly: ignore[no-matching-overload]
+        plgpu.store(block, values, mask=wrong_col)  # pyrefly: ignore[no-matching-overload]
+
+    def check_mask_composition[M: IntVar, N: IntVar, BM: IntVar, BN: IntVar](
+        rows: pl.Mask[[BM, 1], [M, 1]],
+        columns: pl.Mask[[1, BN], [1, N]],
+    ) -> None:
+        assert_type(rows & columns, pl.Mask[[BM, BN], [M, N]])
 
     def check_shape[M: IntVar, K: IntVar, N: IntVar, G: IntVar, Other: IntVar](
         lhs: jax.Array[[M, K]],

@@ -1,7 +1,7 @@
 # Pallas library
 
-`pallas-stubs/` is an independent copy of the v0 JAX/Pallas stub overlay,
-included on v1's Pyrefly search path. Unlike Triton, Pallas accepts semantic
+`pallas-stubs/` is a shape-aware JAX/Pallas stub overlay for the included
+examples, included on Pyrefly's search path. Unlike Triton, Pallas accepts semantic
 `pl.InRef` and `pl.OutRef` annotations directly; no decorator or source
 rewrite is needed. JAX arrays do not expose the Torch-style element-stride
 contract checked in the Triton experiment.
@@ -45,10 +45,42 @@ input and output Refs. Keep the pattern-specific constructors for that static
 check. Neither path proves index-map arithmetic, complete output coverage, or
 that a kernel respects a given Ref's declared shape internally.
 
-The copied JAX/Pallas stub overlay still includes semantic roles and overloads
-for other v0 tutorials. These examples use its shared `InRef`, `OutRef`, tile,
-masked-access, and `BlockSpec` types; removing unrelated overlay entries
-requires pruning their cross-module references without weakening those rules.
+The JAX/Pallas stub overlay models the included v1 examples using shared
+`InRef`, `OutRef`, tile, masked-access, and `BlockSpec` types. The decode
+attention kernel uses ordinary shape-parameterized Refs for query, key/value,
+scalar bounds, outputs, and residuals. A dynamically selected decode tile is
+a `TransformedRef`, rather than a separate attention-specific Ref role. Indexed
+input/output Refs use a shared
+`TransformedRef[BaseShape, TileShape, Role, ValidShape]` to check a tile load
+or store against the original allocation bounds and tile-sized mask. The
+valid shape defaults to the base shape for unpadded selections. Padded inputs
+use `ValidInRef[Shape, ValidShape]`, and padded outputs use
+`ValidOutRef[Shape, ValidShape]`; their selected views preserve the real
+feature bound. Neither type tracks the symbolic selection location.
+Boolean predicates use `Mask[TileShape, ValidBounds]`: a one-dimensional mask
+can acquire a singleton broadcast axis, and intersecting row and column masks
+produces a two-dimensional mask with both bounds. Loads and stores match the
+mask's tile and valid bounds to the selected Ref. Bounds of `int` remain
+gradual; this model does not prove that a predicate actually guards the
+corresponding memory address. Mask composition with `&=` on an already-typed
+local cannot change that local's shape parameters in Pyrefly; use of the
+operator in the ragged-dot kernel is not proof of its final mask bounds.
+The Pallas overlay does not include the disconnected paged-attention, LSE,
+and convolution Ref families and their `pallas_call` overloads; these kernels
+are not in the v1 corpus. Forward attention uses full and selected general
+Refs; its query's valid extent is explicit even though it equals the visible
+block extent. Backward attention's padded feature extent is retained through
+both selected input loads and output stores; its optional segment input is
+still a special Ref. Ragged dot's output is a `ValidOutRef` whose visible
+column block and full valid-column bound remain distinct. Selecting its
+rectangle produces a `RectOutputBlock`, whose store accepts either a row-only
+mask or a combined row/column mask. Scalar boundary Refs produce an
+`AxisBound[Rows]` for row-index comparisons. Ragged LHS/RHS selected inputs
+retain dedicated types because the unchanged kernel loads them both masked
+and unmasked in different runtime branches; their unmasked safety requires
+branch-sensitive reasoning that the current type system does not provide.
+TPU compiler parameters are modeled for the matmul example; TPU scratch-memory,
+remote-copy, subcore, and prefetch typing is outside this example corpus.
 
 For softmax, `row_layout` checks that the kernel's input and output Ref
 shapes agree with `out_shape`; the shared launcher checks the actual row

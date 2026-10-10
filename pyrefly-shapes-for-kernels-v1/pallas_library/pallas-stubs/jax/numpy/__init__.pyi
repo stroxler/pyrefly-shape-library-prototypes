@@ -11,17 +11,11 @@ import numpy as np
 from jax import Array, RaggedCumulative
 from jax.experimental.pallas import (
     AccumRef,
-    ConvSegmentMask,
-    IndexMask,
     Indices,
     Mask,
-    MhaMask,
     OutRef,
-    PagedAttentionMask,
     ScalarFloat,
     Tile,
-    TiledLseRows,
-    VocabMask,
 )
 from jax.experimental.pallas.tpu import VmemScratchRef
 from shape_extensions import Int, IntListLiteral, IntTuple, IntVar
@@ -110,9 +104,6 @@ class FloatInfo:
     min: float
 
 def finfo(dtype: object) -> FloatInfo: ...
-def tile[Rows: IntVar](
-    x: Tile[[Rows, 128]], repeats: tuple[Literal[1], int]
-) -> TiledLseRows[Rows]: ...
 def full_like[Rows: IntVar](
     ref: VmemScratchRef[[Rows, 128]], value: float
 ) -> Tile[[Rows, 128]]: ...
@@ -141,9 +132,9 @@ def zeros_like[Shape: IntTuple](ref: Tile[Shape]) -> Tile[Shape]: ...
 @overload
 def zeros_like[Shape: IntTuple](ref: OutRef[Shape]) -> Tile[Shape]: ...
 @overload
-def logical_and[Queries: IntVar, Keys: IntVar](
-    x: MhaMask[Queries, Keys], y: MhaMask[Queries, Keys]
-) -> MhaMask[Queries, Keys]: ...
+def logical_and[Shape: IntTuple, Bounds: IntTuple](
+    x: Mask[Shape, Bounds], y: Mask[Shape, Bounds]
+) -> Mask[Shape, Bounds]: ...
 @overload
 def logical_and(x: bool, y: bool) -> bool: ...
 def log2[Length: IntVar](x: Tile[[Length]]) -> Tile[[Length]]: ...
@@ -166,37 +157,37 @@ def where[Shape: IntTuple](
 ) -> Tile[Shape]: ...
 @overload
 def where[Window: IntVar, Cols: IntVar](
-    condition: IndexMask[Window],
+    condition: Mask[[Window, 1], [Window, 1]],
     true_value: Tile[[Window, Cols]],
     false_value: Tile[[Window, Cols]],
 ) -> Tile[[Window, Cols]]: ...
 @overload
 def where[Queries: IntVar, Keys: IntVar](
-    condition: MhaMask[Queries, Keys],
+    condition: Mask[[Queries, Keys], [int, int]],
     true_value: Tile[[Queries, Keys]],
     false_value: float,
 ) -> Tile[[Queries, Keys]]: ...
 @overload
 def where[Length: IntVar, Block: IntVar](
-    condition: Mask[Block, Length],
+    condition: Mask[[Block], [Length]],
     true_value: Tile[[Block]],
     false_value: float,
 ) -> Tile[[Block]]: ...
 @overload
 def where[Rows: IntVar, Cols: IntVar](
-    condition: ConvSegmentMask[Rows],
+    condition: Mask[[Rows, 1], [Rows, 1]],
     true_value: Tile[[Rows, Cols]],
     false_value: Tile[[Rows, Cols]],
 ) -> Tile[[Rows, Cols]]: ...
 @overload
 def where[Rows: IntVar, Block: IntVar, Vocab: IntVar](
-    condition: VocabMask[Block, Vocab],
+    condition: Mask[[1, Block], [1, Vocab]],
     true_value: Tile[[Rows, Block]],
     false_value: float,
 ) -> Tile[[Rows, Block]]: ...
 @overload
-def where[Heads: IntVar, Block: IntVar](
-    condition: PagedAttentionMask[Heads, Block],
+def where[Heads: IntVar, Block: IntVar, Length: IntVar](
+    condition: Mask[[Heads, Block], [Heads, Length]],
     true_value: Tile[[Heads, Block]],
     false_value: float,
 ) -> Tile[[Heads, Block]]: ...

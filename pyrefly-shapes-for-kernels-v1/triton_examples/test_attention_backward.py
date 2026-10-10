@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import os
 import unittest
-from typing import TYPE_CHECKING, Any, assert_type, cast
+from typing import TYPE_CHECKING, Any, Literal, assert_type, cast
 
 import torch
 import triton.language as tl
@@ -62,21 +62,43 @@ TokenStride = IntVar("TokenStride")
 FeatureStride = IntVar("FeatureStride")
 SliceFactor = IntVar("SliceFactor")
 
+type _SelectedHeadIn[T: IntVar, D: IntVar, TS: IntVar, FS: IntVar] = (
+    tl.SelectedInPointer[
+        [int, int, T, D],
+        [int, int, TS, FS],
+        [T, D],
+        [TS, FS],
+        Literal["grouped"],
+    ]
+)
+type _SelectedHeadOut[T: IntVar, D: IntVar, TS: IntVar, FS: IntVar] = (
+    tl.SelectedOutPointer[
+        [int, int, T, D],
+        [int, int, TS, FS],
+        [T, D],
+        [TS, FS],
+        Literal["grouped"],
+    ]
+)
+type _SelectedStatsIn[T: IntVar] = tl.SelectedInPointer[
+    [int, int, T], [int, T, 1], [T], [1], Literal["row"]
+]
+
 
 @semantic_jit
 def _attn_bwd_dkdv(
     dk: tl.tensor[[BN, Dim]],
     dv: tl.tensor[[BN, Dim]],  #
-    Q: tl.AttentionHeadLocalInputPointer[Tokens, Dim, TokenStride, FeatureStride],
+    Q: _SelectedHeadIn[Tokens, Dim, TokenStride, FeatureStride],
     k: tl.tensor[[BN, Dim]],
     v: tl.tensor[[BN, Dim]],
     sm_scale: float,  #
-    DO: tl.AttentionHeadLocalInputPointer[Tokens, Dim, TokenStride, FeatureStride],  #
-    M: tl.AttentionHeadLocalStatsPointer[Tokens],
-    D: tl.AttentionHeadLocalStatsPointer[Tokens],  #
+    DO: _SelectedHeadIn[Tokens, Dim, TokenStride, FeatureStride],  #
+    M: _SelectedStatsIn[Tokens],
+    D: _SelectedStatsIn[Tokens],  #
     stride_tok: Int[TokenStride],
     stride_d: Int[FeatureStride],  #
-    H: Int[Heads],
+    H: tl.GroupSize[Heads],
     N_CTX: Int[Tokens],
     BLOCK_M1: ConstExpr[Int[BM]],  #
     BLOCK_N1: ConstExpr[Int[BN]],  #
@@ -129,15 +151,15 @@ def _attn_bwd_dkdv(
 def _attn_bwd_dq(
     dq: tl.tensor[[BM, Dim]],
     q: tl.tensor[[BM, Dim]],
-    K: tl.AttentionHeadLocalInputPointer[Tokens, Dim, TokenStride, FeatureStride],
-    V: tl.AttentionHeadLocalInputPointer[Tokens, Dim, TokenStride, FeatureStride],  #
+    K: _SelectedHeadIn[Tokens, Dim, TokenStride, FeatureStride],
+    V: _SelectedHeadIn[Tokens, Dim, TokenStride, FeatureStride],  #
     do: tl.tensor[[BM, Dim]],
     m: tl.tensor[[BM, 1]],
-    D: tl.AttentionHeadLocalStatsPointer[Tokens],
+    D: _SelectedStatsIn[Tokens],
     # shared by Q/K/V/DO.
     stride_tok: Int[TokenStride],
     stride_d: Int[FeatureStride],  #
-    H: Int[Heads],
+    H: tl.GroupSize[Heads],
     N_CTX: Int[Tokens],  #
     BLOCK_M2: ConstExpr[Int[BM]],  #
     BLOCK_N2: ConstExpr[Int[BN]],  #
@@ -195,11 +217,11 @@ def _attn_bwd(
     DV: tlt.OutPointer[[Batch, Heads, Tokens, Dim], [int, int, Dim, 1]],
     M: tlt.InPointer[[Batch, Heads, Tokens], [int, Tokens, 1]],
     D: tlt.InPointer[[Batch, Heads, Tokens], [int, Tokens, 1]],
-    stride_z: tl.AttentionBatchStride[Heads, int],
-    stride_h: tl.AttentionHeadStride[Heads, int],
+    stride_z: tl.AxisStride[Heads, int, Literal["quotient"]],
+    stride_h: tl.AxisStride[Heads, int, Literal["remainder"]],
     stride_tok: Int[Dim],
     stride_d: Int[1],
-    H: tl.AttentionHeadCount[Heads],
+    H: tl.GroupSize[Heads],
     N_CTX: Int[Tokens],
     BLOCK_M1: ConstExpr[Int[BM1]],
     BLOCK_N1: ConstExpr[Int[BN1]],
@@ -421,9 +443,9 @@ def attention_backward[B: IntVar, H: IntVar, T: IntVar, D: IntVar](
     shape = (batch, heads, tokens, dim)
     stats_shape = (batch, heads, tokens)
     # The layout has verified these dense strides against the tensor allocation.
-    stride_z = cast("tl.AttentionBatchStride[H, int]", q.stride(0))
-    stride_h = cast("tl.AttentionHeadStride[H, int]", q.stride(1))
-    head_count = cast("tl.AttentionHeadCount[H]", heads)
+    stride_z = cast('tl.AxisStride[H, int, Literal["quotient"]]', q.stride(0))
+    stride_h = cast('tl.AxisStride[H, int, Literal["remainder"]]', q.stride(1))
+    head_count = cast("tl.GroupSize[H]", heads)
     layout.launch(
         _attn_bwd,
         checked_attention_backward_input(q, shape),
@@ -539,11 +561,142 @@ class AttentionBackwardTest(unittest.TestCase):
 
 if TYPE_CHECKING:
 
+    def typed_logical_mask_alignment[Rows: IntVar, Cols: IntVar, Other: IntVar](
+        row_indices: tl.RowAxisOffsets[Rows],
+        column_indices: tl.ColumnAxisOffsets[Cols],
+        values: tl.tensor[[Rows, Cols]],
+        loaded_condition: tl.tensor[[Rows, Cols]],
+        wrong_values: tl.tensor[[Rows, Other]],
+        pointers: tl.InTilePointers[
+            [Rows, Cols], [Cols, 1], [Rows, Cols], Literal["indexed"]
+        ],
+    ) -> None:
+        logical_mask = column_indices >= row_indices
+        assert_type(logical_mask, tl.LogicalMask[[Rows, Cols]])
+        assert_type(tl.where(logical_mask, values, 0.0), tl.tensor[[Rows, Cols]])
+        assert_type(tl.where(loaded_condition, values, 0.0), tl.tensor[[Rows, Cols]])
+        tl.where(logical_mask, wrong_values, 0.0)  # pyrefly: ignore[no-matching-overload]
+        tl.where(loaded_condition, wrong_values, 0.0)  # pyrefly: ignore[no-matching-overload]
+        tl.load(pointers, mask=logical_mask)  # pyrefly: ignore[no-matching-overload]
+
+    def typed_selected_tiles[
+        Tokens: IntVar,
+        Dim: IntVar,
+        TS: IntVar,
+        FS: IntVar,
+        Block: IntVar,
+        Other: IntVar,
+    ](
+        source: _SelectedHeadIn[Tokens, Dim, TS, FS],
+        destination: _SelectedHeadOut[Tokens, Dim, TS, FS],
+        rows: tl.RowAddress[Block, TS],
+        columns: tl.ColumnAddress[Block, TS],
+        features: tl.ColumnAddress[Dim, FS],
+        transpose_features: tl.RowAddress[Dim, FS],
+        wrong_features: tl.ColumnAddress[Dim, Other],
+        step: Int[Block * TS],
+        wrong_step: Int[Block * FS],
+        values: tl.tensor[[Block, Dim]],
+        wrong_values: tl.tensor[[Block, Other]],
+    ) -> None:
+        forward = source + rows + features
+        assert_type(
+            forward,
+            tl.InTilePointers[
+                [Tokens, Dim], [TS, FS], [Block, Dim], Literal["selected_unchecked_0"]
+            ],
+        )
+        assert_type(tl.load(forward), tl.tensor[[Block, Dim]])
+        assert_type(
+            tl.load(source + columns + transpose_features), tl.tensor[[Dim, Block]]
+        )
+        assert_type(
+            forward.__iadd__(step),
+            tl.InTilePointers[
+                [Tokens, Dim], [TS, FS], [Block, Dim], Literal["selected_unchecked_0"]
+            ],
+        )
+        forward.__iadd__(wrong_step)  # pyrefly: ignore[no-matching-overload]
+        source + rows + wrong_features  # pyrefly: ignore[unsupported-operation]
+        output = destination + rows + features
+        assert_type(
+            output,
+            tl.OutTilePointers[
+                [Tokens, Dim], [TS, FS], [Block, Dim], Literal["selected_unchecked_0"]
+            ],
+        )
+        tl.store(output, values)
+        tl.store(output, wrong_values)  # pyrefly: ignore[no-matching-overload]
+
+    def typed_grouped_address[H: IntVar, Other: IntVar, SZ: IntVar, SH: IntVar](
+        pid: tl.ProgramId[Literal[2]],
+        count: tl.GroupSize[H],
+        other_count: tl.GroupSize[Other],
+        head_stride: tl.AxisStride[H, SH, Literal["remainder"]],
+        batch_stride: tl.AxisStride[H, SZ, Literal["quotient"]],
+    ) -> None:
+        head = pid % count
+        batch = pid // count
+        assert_type(head, tl.GroupIndex[H])
+        assert_type(batch, tl.GroupQuotient[H])
+        assert_type(
+            head_stride * head + batch_stride * batch,
+            tl.CombinedAddress[H, [SZ, SH]],
+        )
+        head_stride * batch  # pyrefly: ignore[unsupported-operation]
+        batch_stride * head  # pyrefly: ignore[unsupported-operation]
+        head_stride * (pid % other_count)  # pyrefly: ignore[unsupported-operation]
+
     def typed_head_address[B: IntVar, H: IntVar, T: IntVar, D: IntVar, Other: IntVar](
         q: tlt.InPointer[[B, H, T, D], [int, int, D, 1]],
-        wrong_head: tl.AttentionBatchHeadOffset[Other, int, int],
+        correct_head: tl.CombinedAddress[H, [int, int]],
+        wrong_head: tl.CombinedAddress[Other, [int, int]],
     ) -> None:
+        assert_type(
+            q + correct_head,
+            tl.SelectedInPointer[
+                [B, H, T, D],
+                [int, int, D, 1],
+                [T, D],
+                [D, 1],
+                Literal["grouped"],
+            ],
+        )
         q + wrong_head  # pyrefly: ignore[unsupported-operation]
+
+    def typed_selected_stats[
+        Batch: IntVar,
+        Heads: IntVar,
+        Tokens: IntVar,
+        Block: IntVar,
+        Other: IntVar,
+    ](
+        source: tlt.InPointer[[Batch, Heads, Tokens], [int, Tokens, 1]],
+        destination: tlt.OutPointer[[Batch, Heads, Tokens], [int, Tokens, 1]],
+        row: tl.TileStart[[Tokens], Literal[2]],
+        good: tl.Offsets[[Block], [1], Literal["program"], Literal[0]],
+        wrong_grid: tl.Offsets[[Block], [1], Literal["program"], Literal[1]],
+        wrong_step: tl.Offsets[[Block], [Other], Literal["program"], Literal[0]],
+        values: tl.tensor[[Block]],
+        wrong_values: tl.tensor[[Other]],
+    ) -> None:
+        selected_input = source + row
+        assert_type(
+            selected_input,
+            tl.SelectedInPointer[
+                [Batch, Heads, Tokens],
+                [int, Tokens, 1],
+                [Tokens],
+                [1],
+                Literal["row"],
+            ],
+        )
+        assert_type(tl.load(selected_input + good), tl.tensor[[Block]])
+        selected_input + wrong_step  # pyrefly: ignore[unsupported-operation]
+        selected_output = destination + row
+        assert_type(tl.store(selected_output + good, values), None)
+        selected_output + wrong_grid  # pyrefly: ignore[unsupported-operation]
+        tl.store(selected_output + good, wrong_values)  # pyrefly: ignore[no-matching-overload]
 
     def typed_host_boundary[B: IntVar, H: IntVar, T: IntVar, D: IntVar, Other: IntVar](
         q: torch.Tensor[[B, H, T, D]],

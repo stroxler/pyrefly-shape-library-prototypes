@@ -403,12 +403,17 @@ class LayerNormBackwardTest(unittest.TestCase):
 if TYPE_CHECKING:
 
     def typed_grouped_reduction[
-        Groups: IntVar, Cols: IntVar, Other: IntVar, BM: IntVar, BN: IntVar
+        Groups: IntVar,
+        Cols: IntVar,
+        Other: IntVar,
+        BM: IntVar,
+        BN: IntVar,
     ](
         scratch: tlt.InPointer[[Groups, Cols], [Cols, 1]],
-        offsets: tl.GroupedMatrixOffsets[[BM], [BN], Cols],
-        mask: tl.MatrixMask[Groups, Cols, [BM], [BN]],
-        wrong: tl.MatrixMask[Groups, Other, [BM], [BN]],
+        offsets: tl.Offsets[[BM, BN], [Cols, 1], Literal["grouped"]],
+        wrong_offsets: tl.Offsets[[BM, BN], [Other, 1], Literal["grouped"]],
+        mask: tl.Mask[[Groups, Cols], [BM, BN]],
+        wrong: tl.Mask[[Groups, Other], [BM, BN]],
     ) -> None:
         ptrs = scratch + offsets
         assert_type(
@@ -416,17 +421,21 @@ if TYPE_CHECKING:
             tl.InTilePointers[[Groups, Cols], [Cols, 1], [BM, BN], Literal["grouped"]],
         )
         assert_type(tl.load(ptrs, mask=mask, other=0.0), tl.tensor[[BM, BN]])
+        scratch + wrong_offsets  # pyrefly: ignore[unsupported-operation]
         tl.load(ptrs, mask=wrong, other=0.0)  # pyrefly: ignore[no-matching-overload]
 
     def typed_pointer_selection[
-        Groups: IntVar, Cols: IntVar, Block: IntVar, Other: IntVar
+        Groups: IntVar,
+        Cols: IntVar,
+        Block: IntVar,
+        Other: IntVar,
     ](
         scratch: tlt.InOutPointer[[Groups, Cols], [Cols, 1]],
         locks: tl.LockArrayPointer[Groups, int],
         group: tl.GroupIndex[Groups],
         n: Int[Cols],
         group_size: Int[Groups],
-        columns: tl.Offsets[[Block]],
+        columns: tl.Offsets[[Block], [1]],
         mask: tl.Mask[[Cols], [Block]],
         wrong_mask: tl.Mask[[Other], [Block]],
         values: tl.tensor[[Block]],

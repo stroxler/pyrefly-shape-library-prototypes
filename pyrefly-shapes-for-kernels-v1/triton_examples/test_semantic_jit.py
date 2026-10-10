@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import unittest
 from typing import Any, cast
@@ -10,7 +11,7 @@ import torch
 from shape_extensions import Int, IntVar
 
 from triton_library import tlt
-from triton_library.semantic_jit import ConstExpr, semantic_jit
+from triton_library.semantic_jit import ConstExpr, _triton_source, semantic_jit
 from triton_library.tlt import InPointer as InputPointerAlias
 from triton_library.torch_views import checked_matrix, checked_vector
 
@@ -67,6 +68,26 @@ def aliased_pointer_kernel(
 
 class SemanticJitTest(unittest.TestCase):
     """Validate pointer and scalar contracts before compiling or interpreting."""
+
+    def test_semantic_return_type_is_removed_from_triton_source(self) -> None:
+        source = (
+            'def helper(x: int) -> tl.tensor_descriptor[[3, 4], [4, 1], [2, 2], Literal["read"]]:\n'
+            "    return x\n"
+        )
+        self.assertEqual(_triton_source(source), "def helper(x):\n    return x\n")
+
+        multiline = (
+            "def helper(x: int) -> tl.tensor_descriptor[\n"
+            "    [3, 4],\n"
+            "    [4, 1],\n"
+            "    [2, 2],\n"
+            '    Literal["read"],\n'
+            "]:\n"
+            "    return x\n"
+        )
+        stripped = _triton_source(multiline)
+        ast.parse(stripped)
+        self.assertEqual(stripped.count("\n"), multiline.count("\n"))
 
     def test_postponed_annotations_register_a_pointer_hook(self) -> None:
         hooks = cast(Any, postponed_kernel).pre_run_hooks

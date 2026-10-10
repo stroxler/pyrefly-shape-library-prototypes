@@ -8,7 +8,7 @@ import os
 import unittest
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import torch
 import triton
@@ -27,11 +27,11 @@ BK = IntVar("BK")
 
 @semantic_jit
 def grouped_matmul_tma_kernel(
-    group_a_ptrs: "tl.GroupAPointers[Groups]",
-    group_b_ptrs: "tl.GroupBPointers[Groups]",
-    group_c_ptrs: "tl.GroupCPointers[Groups]",
-    group_gemm_sizes: "tl.GroupSizes[Groups]",
-    g_lds: "tl.GroupLeadingDimensions[Groups]",
+    group_a_ptrs: "tl.PointerTable[Groups, Literal['read']]",
+    group_b_ptrs: "tl.PointerTable[Groups, Literal['read']]",
+    group_c_ptrs: "tl.PointerTable[Groups, Literal['write']]",
+    group_gemm_sizes: "tl.PackedIntTable[Groups, 3]",
+    g_lds: "tl.PackedIntTable[Groups, 3]",
     group_size: Int[Groups],
     NUM_SM: ConstExpr[int],
     BLOCK_SIZE_M: ConstExpr[Int[BM]],
@@ -200,11 +200,11 @@ def checked_grouped_gemm_tma(
 
     cast(Any, triton).set_allocator(alloc_fn)
     grouped_matmul_tma_kernel[(num_sm,)](
-        cast("tl.GroupAPointers[int]", a_ptrs),
-        cast("tl.GroupBPointers[int]", b_ptrs),
-        cast("tl.GroupCPointers[int]", c_ptrs),
-        cast("tl.GroupSizes[int]", sizes),
-        cast("tl.GroupLeadingDimensions[int]", leading),
+        cast("tl.PointerTable[int, Literal['read']]", a_ptrs),
+        cast("tl.PointerTable[int, Literal['read']]", b_ptrs),
+        cast("tl.PointerTable[int, Literal['write']]", c_ptrs),
+        cast("tl.PackedIntTable[int, 3]", sizes),
+        cast("tl.PackedIntTable[int, 3]", leading),
         len(problems),
         num_sm,
         block_m,
@@ -276,13 +276,13 @@ class GroupedGemmTmaTest(unittest.TestCase):
 if TYPE_CHECKING:
 
     def check_tma_roles[Groups: IntVar](
-        a: tl.GroupAPointers[Groups],
-        b: tl.GroupBPointers[Groups],
-        c: tl.GroupCPointers[Groups],
-        sizes: tl.GroupSizes[Groups],
-        leading: tl.GroupLeadingDimensions[Groups],
+        a: tl.PointerTable[Groups, Literal["read"]],
+        b: tl.PointerTable[Groups, Literal["read"]],
+        c: tl.PointerTable[Groups, Literal["write"]],
+        sizes: tl.PackedIntTable[Groups, 3],
+        leading: tl.PackedIntTable[Groups, 3],
         count: Int[Groups],
-        wrong_b: tl.GroupAPointers[Groups],
+        wrong_b: tl.PointerTable[Groups, Literal["write"]],
     ) -> None:
         grouped_matmul_tma_kernel(
             a, b, c, sizes, leading, count, 2, 128, 128, 64, False
